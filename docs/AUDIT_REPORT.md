@@ -366,7 +366,7 @@ Konsekwencje:
 
 | Krok | Cel | Warunek przejścia dalej |
 |---|---|---|
-| 0 | Dane + symulator egzekucji + model kosztów | Symulator odtwarza znane fille; koszt zwalidowany wobec realnych spreadów brokera |
+| 0 | Dane + symulator egzekucji + model kosztów | Symulator odtwarza znane fille; koszt liczony z rzeczywistych ticków z podłogą detaliczną |
 | 1 | **Kontrola losowa**: losowe wejścia, identyczne wyjścia i sizing, ta sama liczba transakcji | Znany rozkład zerowy expectancy i Sharpe'a |
 | 2 | Baseline deterministyczny (≤3 parametry) | Bije kontrolę losową z DSR-skorygowanym t > 2 |
 | 3 | Dodanie warunkowania zmiennością | +≥0,03 R poza próbą, inaczej usunąć |
@@ -695,7 +695,7 @@ Bez tego cały backtest jest bezwartościowy.
 | Składnik | Model V1 |
 |---|---|
 | **Spread** | Rzeczywisty historyczny bid/ask z ticków Dukascopy w momencie fillu. **Nie średni spread.** Nie mid |
-| **Prowizja** | Stała per lot wg wybranego brokera ECN, przeliczona na jednostki ceny |
+| **Prowizja** | Wliczona w podłogę kosztu — nie modelowana osobno (ADR-024) |
 | **Poślizg — wejście** | ≥ 0,5 × mediana spreadu w danej godzinie, w niekorzystną stronę |
 | **Poślizg — SL** | **≥ 1,0 × spread** w niekorzystną stronę. Stop-loss ma **asymetryczny poślizg** — realizuje się dokładnie wtedy, gdy rynek się porusza |
 | **Poślizg — TP** | 0 (limit); ale **fill tylko przy pełnym przekroczeniu poziomu** |
@@ -793,7 +793,7 @@ Zanim cokolwiek zbadacie, musicie wiedzieć, że aparatura mierzy.
 | Integralność ticków | Raport braków: luki > 60 s w godzinach handlowych, zliczone i udokumentowane |
 | Sanity fillów | Ręcznie zweryfikowane 20 transakcji, tick po ticku |
 | Kolejność barier | Udokumentowany odsetek barów H1 dotykających obu barier; porównanie wyniku „tick-accurate" vs „pesymistycznie" vs „optymistycznie". **Różnica między wariantem optymistycznym a tickowym to miara błędu, który popełniłby naiwny backtest** |
-| Realizm kosztów | Mediana modelowanego spreadu na godzinę porównana z realnymi spreadami rachunku demo brokera przez 2 tygodnie |
+| Realizm kosztów | Efektywny koszt = `max(spread_tickowy + prowizja, podłoga)`; podłoga 1,5 pipsa majors, 2,5 crosses. **Broker-agnostyczne** — patrz ADR-024 |
 | Test negatywny | Strategia losowa daje expectancy ≈ **−koszt**, nie 0 i nie +. Jeśli daje 0 lub więcej, **model kosztów jest zepsuty** |
 
 **Ostatni wiersz jest najtańszym i najostrzejszym testem poprawności całego stosu. Zróbcie go pierwszy.**
@@ -1144,7 +1144,7 @@ Prerejestrowane. Do zapisania w `PROJECT_SPEC.md` **przed** pierwszym backtestem
 **PORZUCAMY, jeśli:**
 - Symulator egzekucji nie przechodzi testu negatywnego (strategia losowa nie daje expectancy ≈ −koszt), **lub**
 - Luki w danych > 5% barów H1 w godzinach handlowych na ≥2 parach, **lub**
-- Nie da się zwalidować modelu kosztów wobec realnych spreadów brokera.
+- Spread nie jest odtwarzany z rzeczywistych ticków bid/ask lub model nie stosuje podłogi kosztu.
 
 *Uzasadnienie: bez działającej aparatury pomiarowej każdy dalszy wynik jest bezwartościowy.*
 

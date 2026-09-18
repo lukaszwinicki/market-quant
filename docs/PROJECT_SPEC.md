@@ -264,7 +264,8 @@ System nie handluje, gdy:
 | Składnik | Model |
 |---|---|
 | Spread | **Rzeczywisty historyczny bid/ask z ticków** w momencie fillu. Nigdy średni, nigdy mid |
-| Prowizja | Stała per lot wg brokera ECN, przeliczona na jednostki ceny |
+| Prowizja | Wliczona w podłogę kosztu — nie modelowana osobno |
+| **Podłoga kosztu** | `max(spread_tickowy + prowizja, podłoga)`; 1,5 pipsa majors, 2,5 pipsa crosses |
 | Poślizg — wejście | ≥ 0,5 × mediana spreadu w danej godzinie, niekorzystnie |
 | Poślizg — SL | **≥ 1,0 × spread, niekorzystnie** (asymetria: stop realizuje się, gdy rynek się porusza) |
 | Poślizg — TP | 0, ale fill **tylko przy pełnym przekroczeniu poziomu** |
@@ -468,7 +469,8 @@ Kohorta B nie opóźnia bramek 0–4. Gdyby weszła do V1, przesunęłaby bramk�
 STOP, jeśli:
 - Strategia losowa **nie** daje expectancy ≈ −koszt (→ model kosztów zepsuty), **lub**
 - Luki > 5% barów H1 w godzinach handlowych na ≥2 parach, **lub**
-- Nie da się zwalidować kosztów wobec realnych spreadów brokera.
+- Spread nie jest odtwarzany z rzeczywistych ticków bid/ask, **lub**
+- Model kosztów nie stosuje podłogi `min_roundturn_cost_pips`.
 
 ## Gate 1 — rozkład zerowy (tydzień 5)
 

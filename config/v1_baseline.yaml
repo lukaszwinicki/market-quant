@@ -97,6 +97,20 @@ data:
   price_convention: "bid_ask_separate"
   mid_price_allowed: false
 
+  # Granica świecy D1 jest konwencją, nie faktem rynkowym — FX nie ma
+  # oficjalnego zamknięcia, a każdy broker stosuje własną. Po ADR-023
+  # to atr_d1_14 wyznacza stopy, więc konwencja wpływa na dystans SL.
+  d1_boundary:
+    research: "00:00 UTC"
+    frozen: true
+    # Zamiast dopasowywać się do konkretnego brokera, traktujemy to jako
+    # test odporności. Jeśli wynik istotnie zależy od granicy dnia,
+    # problem jest w strategii, nie w brokerze.
+    robustness_test:
+      alternatives: ["17:00 NY", "22:00 UTC"]
+      run_at_gate: 2
+      fail_if: "expectancy zmienia znak lub spada o >30% między wariantami"
+
   splits:
     frozen: true
     research:
@@ -357,11 +371,26 @@ risk:
 # MODEL KOSZTÓW
 # =============================================================================
 costs:
+  # ZASADA: strategia ma być broker-agnostyczna. Edge, który przeżywa
+  # tylko u brokera o najwęższym spreadzie, nie jest edge'em tylko
+  # artefaktem zaokrąglenia. Mechanizmem zapewniającym niezależność
+  # od brokera jest ZAPAS KOSZTOWY, nie pominięcie kosztów.
+  broker_agnostic: true
+
   spread:
     source: "rzeczywiste ticki bid/ask w momencie fillu"
     use_average_spread: false
     use_mid: false
-  commission: "stała per lot, przeliczona na jednostki ceny"
+
+  # Surowy spread Dukascopy jest węższy niż u typowego brokera detalicznego.
+  # Modelowanie go wprost byłoby optymistyczne, więc nakładamy podłogę
+  # odpowiadającą przeciętnym warunkom detalicznym. Efektywny koszt to
+  # max(spread_tickowy + prowizja, podłoga).
+  min_roundturn_cost_pips:
+    fx_majors: 1.5
+    fx_crosses: 2.5
+
+  commission: "wliczona w podłogę kosztu — nie modelowana osobno"
   slippage_entry_x_spread: 0.5
   slippage_stop_x_spread: 1.0            # asymetryczne — stop realizuje się w ruchu
   slippage_tp: 0.0
@@ -484,7 +513,8 @@ gates:
     stop_if_any:
       - "strategia losowa NIE daje expectancy ~ -koszt (model kosztów zepsuty)"
       - "luki > 5% barów H1 w godzinach handlowych na >= 2 parach"
-      - "nie da się zwalidować kosztów wobec realnych spreadów brokera"
+      - "spread nie jest odtwarzany z rzeczywistych ticków bid/ask (użyto średniej lub mid)"
+      - "model kosztów nie stosuje podłogi min_roundturn_cost_pips"
 
   gate_1:
     week: 5

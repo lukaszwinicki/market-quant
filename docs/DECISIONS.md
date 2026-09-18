@@ -354,6 +354,37 @@ FX majors są jednorodne w sposób, w jaki kohorta B nie jest: handel ciągły 2
 
 ---
 
+## ADR-024 — Model kosztów broker-agnostyczny; bez badania konkretnego brokera
+
+**Status:** ACCEPTED · 2026-09-19
+
+**Kontekst:** Użytkownik prawdopodobnie będzie handlował przez CMC Markets. Rozważano dopisanie do konfiguracji sekcji `execution_venue` z parametrami tego brokera i kalibrację modelu kosztów przez logowanie spreadów na rachunku demo.
+
+**Decyzja:** Odrzucone. Model kosztów jest broker-agnostyczny. Żaden broker nie jest wymieniony w konfiguracji.
+
+**Uzasadnienie:**
+
+1. **Edge zależny od brokera nie jest edge'em.** Strategia, która przeżywa tylko przy najwęższym dostępnym spreadzie, jest artefaktem zaokrąglenia, nie przewagą. Wymóg niezależności od miejsca egzekucji jest mocniejszym kryterium niż dokładna kalibracja.
+2. **Dane z demo są niewiarygodne.** Spready na rachunkach demo bywają istotnie węższe niż live — to ogólna przypadłość platform, nie zarzut wobec konkretnego brokera. Kalibracja na demo dawałaby fałszywe poczucie precyzji.
+3. **Prawdziwy pomiar kosztu jest możliwy dopiero na rachunku live o małej wielkości**, czyli po bramce 4. Badanie tego wcześniej jest przedwczesną optymalizacją nadbudowaną nad niezwalidowaną strategią.
+
+**Mechanizm zastępczy — zapas kosztowy zamiast kalibracji:**
+
+| Element | Wartość |
+|---|---|
+| Podłoga kosztu round-turn, majors | 1,5 pipsa |
+| Podłoga kosztu round-turn, crosses | 2,5 pipsa |
+| Efektywny koszt | `max(spread_tickowy + prowizja, podłoga)` |
+| Wymóg przeżycia | expectancy > 0 przy **3×** kosztów |
+
+Surowy spread Dukascopy (~0,2–0,4 pipsa round-turn na majorsach) jest węższy niż u typowego brokera detalicznego, więc modelowanie go wprost byłoby optymistyczne. Podłoga odpowiada przeciętnym warunkom detalicznym; mnożnik 3× pokrywa z zapasem rozrzut między brokerami i rozszerzenia spreadu.
+
+**Konsekwencja dla granicy świecy D1:** zamiast dopasowywać `atr_d1_14` do konwencji konkretnej platformy, granica dnia staje się **testem odporności** uruchamianym na bramce 2 (warianty 00:00 UTC, 17:00 NY, 22:00 UTC). Kryterium porażki: expectancy zmienia znak lub spada o >30% między wariantami. Jeśli wynik zależy od granicy dnia, problem jest w strategii, nie w brokerze.
+
+**Odrzucone wraz z tą decyzją:** logowanie spreadów przez skrypt MQL4 na MT4, sekcja `execution_venue` w konfiguracji, wymóg walidacji kosztów wobec spreadów brokera w bramce 0.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
