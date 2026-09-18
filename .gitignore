@@ -1,0 +1,29 @@
+# === DANE — nigdy nie wersjonowane ===
+# Ticki Dukascopy to 10–50 GB. Dane są odtwarzalne z downloadera.
+data/
+*.parquet
+*.csv
+*.bi5
+*.gz
+
+# === WYNIKI URUCHOMIEŃ ===
+runs/
+
+# UWAGA: trials.jsonl NIE jest tu wymieniony celowo.
+# Rejestr prób MUSI być wersjonowany — bez historii commitów
+# licznik prób w Deflated Sharpe Ratio jest niewiarygodny.
+
+# === PYTHON ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# === ŚRODOWISKO ===
+.env
+.DS_Store
+.vscode/
+.idea/
