@@ -52,6 +52,16 @@ SYMBOL_SCALE: dict[str, float] = {
     "EURJPY": 1e-3,
 }
 
+def pip_size(symbol: str) -> float:
+    """Wartość jednego pipsa w jednostkach ceny.
+
+    Wyprowadzana ze skali punktu, a nie z osobnej tabeli — dwie tabele
+    mogłyby się rozjechać. Kwotowanie jest 5- albo 3-cyfrowe, więc pips
+    to zawsze 10 punktów: 1e-4 dla par bez JPY, 1e-2 dla par z JPY.
+    """
+    return SYMBOL_SCALE[symbol] * 10
+
+
 # Zakresy prawdopodobnych cen 2015-2026. Celem NIE jest wykrycie anomalii
 # rynkowej, tylko złapanie pomyłki o rząd wielkości w skali.
 PLAUSIBLE_RANGE: dict[str, tuple[float, float]] = {

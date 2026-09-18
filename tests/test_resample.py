@@ -152,3 +152,20 @@ def test_validate_rejects_duplicate_labels():
     })
     with pytest.raises(ValueError, match="zduplikowane"):
         validate_bars(bars)
+
+
+# --- Jednostki: pips zależy od symbolu --------------------------------------
+
+def test_pip_size_differs_for_jpy_pairs():
+    """Sztywne 1e-4 dawało dla EURJPY 'spread 90 pipsów' zamiast 0.9."""
+    from src.data.dukascopy import pip_size
+    assert pip_size("EURUSD") == pytest.approx(1e-4)
+    assert pip_size("GBPUSD") == pytest.approx(1e-4)
+    assert pip_size("USDJPY") == pytest.approx(1e-2)
+    assert pip_size("EURJPY") == pytest.approx(1e-2)
+
+
+def test_typical_spreads_land_in_plausible_pip_range():
+    from src.data.dukascopy import pip_size
+    assert 0.2 <= 0.00003 / pip_size("EURUSD") <= 0.5     # 0.3 pipsa
+    assert 0.5 <= 0.009 / pip_size("EURJPY") <= 1.5       # 0.9 pipsa

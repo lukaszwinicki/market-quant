@@ -1,0 +1,174 @@
+#!/usr/bin/env python
+"""Zbuduj bary M1 i H1 z cache ticków i wygeneruj raport jakości.
+
+Przetwarzanie idzie miesiącami, nie całym zakresem naraz: rok ticków
+jednego symbolu to rzędu 25 mln rekordów, a bary są maleńkie. Trzymanie
+wszystkiego w pamięci nic nie daje poza ryzykiem OOM.
+
+    python scripts/build_bars.py                      # wszystko z cache
+    python scripts/build_bars.py --symbols EURUSD     # jeden symbol
+    python scripts/build_bars.py --years 2015 2016    # wybrane lata
+    python scripts/build_bars.py --no-report          # bez raportu jakości
+
+Można uruchamiać w trakcie pobierania — przetwarza to, co już jest.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import logging
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import polars as pl
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.data.dukascopy import decode_bi5  # noqa: E402
+from src.data.quality import build_report, render_markdown  # noqa: E402
+from src.data.resample import (  # noqa: E402
+    FREQ_H1, FREQ_M1, bars_from_ticks, ticks_to_frame, validate_bars,
+)
+
+UTC = dt.timezone.utc
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = ROOT / "config" / "v1_baseline.yaml"
+
+log = logging.getLogger("build_bars")
+
+
+def hour_of(path: Path) -> dt.datetime:
+    """Odtwórz godzinę UTC ze ścieżki cache: .../SYM/YYYY/MM/DD/HHh_ticks.bi5"""
+    y, m, d = path.parts[-4], path.parts[-3], path.parts[-2]
+    return dt.datetime(int(y), int(m), int(d), int(path.stem[:2]), tzinfo=UTC)
+
+
+def cached_hours(cache: Path, symbol: str) -> dict[tuple[int, int], list[Path]]:
+    """Pliki z danymi, pogrupowane po (rok, miesiąc). Puste pomijamy."""
+    groups: dict[tuple[int, int], list[Path]] = defaultdict(list)
+    for p in (cache / symbol).rglob("*.bi5"):
+        if p.stat().st_size == 0:
+            continue                      # godzina bez handlu — nie daje bara
+        h = hour_of(p)
+        groups[(h.year, h.month)].append(p)
+    return {k: sorted(v, key=hour_of) for k, v in sorted(groups.items())}
+
+
+def build_symbol(symbol: str, cache: Path, out: Path, years: set[int] | None) -> pl.DataFrame:
+    """Zbuduj bary dla jednego symbolu. Zwraca H1 (do raportu jakości)."""
+    months = cached_hours(cache, symbol)
+    if years:
+        months = {k: v for k, v in months.items() if k[0] in years}
+    if not months:
+        log.warning("%s: brak danych w cache", symbol)
+        return pl.DataFrame()
+
+    by_year_m1: dict[int, list[pl.DataFrame]] = defaultdict(list)
+    by_year_h1: dict[int, list[pl.DataFrame]] = defaultdict(list)
+    n_ticks = 0
+
+    for (year, month), paths in months.items():
+        blocks = [decode_bi5(p.read_bytes(), symbol, hour_of(p)) for p in paths]
+        ticks = ticks_to_frame(blocks)
+        if ticks.is_empty():
+            continue
+        n_ticks += ticks.height
+        by_year_m1[year].append(bars_from_ticks(ticks, FREQ_M1))
+        by_year_h1[year].append(bars_from_ticks(ticks, FREQ_H1))
+        log.debug("%s %04d-%02d: %d ticków", symbol, year, month, ticks.height)
+
+    h1_all = []
+    for year in sorted(by_year_m1):
+        # Bary graniczne miesiąca trzeba scalić: tick z 31.01 23:59 i z
+        # 01.02 00:00 należą do różnych paczek, ale ta sama godzina H1 może
+        # się rozciągać przez granicę tylko przy niepełnych danych — mimo to
+        # łączymy defensywnie, żeby nie powstały zduplikowane etykiety.
+        m1 = _merge(pl.concat(by_year_m1[year]))
+        h1 = _merge(pl.concat(by_year_h1[year]))
+        validate_bars(m1)
+        validate_bars(h1)
+        _write(out / "m1", symbol, year, m1)
+        _write(out / "h1", symbol, year, h1)
+        h1_all.append(h1)
+        log.info("%s %d: M1=%d H1=%d barów", symbol, year, m1.height, h1.height)
+
+    log.info("%s: %d ticków -> %d barów H1", symbol, n_ticks,
+             sum(h.height for h in h1_all))
+    return pl.concat(h1_all) if h1_all else pl.DataFrame()
+
+
+def _merge(bars: pl.DataFrame) -> pl.DataFrame:
+    """Scal bary o tej samej etykiecie (granice paczek) i posortuj."""
+    if bars.is_empty() or not bars["ts"].is_duplicated().any():
+        return bars.sort("ts")
+    return (
+        bars.group_by("ts").agg(
+            pl.col("bid_open").first(), pl.col("bid_high").max(),
+            pl.col("bid_low").min(), pl.col("bid_close").last(),
+            pl.col("ask_open").first(), pl.col("ask_high").max(),
+            pl.col("ask_low").min(), pl.col("ask_close").last(),
+            pl.col("spread_max").max(), pl.col("spread_close").last(),
+            pl.col("n_ticks").sum(),
+        ).sort("ts").select(bars.columns)
+    )
+
+
+def _write(base: Path, symbol: str, year: int, bars: pl.DataFrame) -> None:
+    d = base / f"symbol={symbol}" / f"year={year}"
+    d.mkdir(parents=True, exist_ok=True)
+    bars.write_parquet(d / "bars.parquet", compression="zstd")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--cohort", default="cohort_a", choices=["cohort_a", "cohort_b"])
+    ap.add_argument("--symbols", nargs="*")
+    ap.add_argument("--years", nargs="*", type=int)
+    ap.add_argument("--cache", type=Path, default=ROOT / "data" / "raw" / "dukascopy")
+    ap.add_argument("--out", type=Path, default=ROOT / "data" / "bars")
+    ap.add_argument("--report", type=Path,
+                    default=ROOT / "reports" / "data_quality.md")
+    ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    args = ap.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S",
+    )
+
+    cfg = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    symbols = args.symbols or cfg["instruments"][args.cohort]["symbols"]
+    years = set(args.years) if args.years else None
+
+    h1_by_symbol: dict[str, pl.DataFrame] = {}
+    for symbol in symbols:
+        h1 = build_symbol(symbol, args.cache, args.out, years)
+        if not h1.is_empty():
+            h1_by_symbol[symbol] = h1
+
+    if not h1_by_symbol:
+        log.error("Nie zbudowano żadnych barów — czy cache jest pusty?")
+        return 1
+
+    if args.no_report:
+        return 0
+
+    report = build_report(h1_by_symbol)
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(render_markdown(report), encoding="utf-8")
+
+    ok, reasons = report.passes_gate_0()
+    log.info("Raport: %s", args.report)
+    log.info("Bramka 0: %s", "PRZECHODZI" if ok else "NIE PRZECHODZI")
+    for r in reasons:
+        log.warning("  %s", r)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

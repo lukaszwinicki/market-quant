@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
+from .dukascopy import pip_size
+
 UTC = dt.timezone.utc
 
 # Klasyfikacja komórek (dzień tygodnia, godzina UTC) jest TRÓJSTANOWA.
@@ -241,7 +243,7 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
     )
 
 
-def render_markdown(report: QualityReport, pip: float = 1e-4) -> str:
+def render_markdown(report: QualityReport) -> str:
     """Raport w Markdown — wersjonowany w repo jako dowód dla Bramki 0."""
     ok, reasons = report.passes_gate_0()
     lines = [
@@ -267,6 +269,9 @@ def render_markdown(report: QualityReport, pip: float = 1e-4) -> str:
               "| Symbol | close mediana | close p95 | max mediana | max p95 | max zaobserwowany | ticki/bar |",
               "|---|---|---|---|---|---|---|"]
     for r in report.spread_stats.iter_rows(named=True):
+        # Pips zależy od symbolu: 1e-4 poza JPY, 1e-2 dla par z JPY.
+        # Sztywna stała dawała dla EURJPY "90 pipsów" zamiast 0.9.
+        pip = pip_size(r["symbol"])
         lines.append(
             f"| {r['symbol']} | {r['close_median']/pip:.2f} | {r['close_p95']/pip:.2f} "
             f"| {r['max_median']/pip:.2f} | {r['max_p95']/pip:.2f} "
