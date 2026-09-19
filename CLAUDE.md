@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (84 testy):
+Gotowe (121 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -122,6 +122,17 @@ Gotowe (84 testy):
 - `src/features/technical.py` — 6 cech, test kauzalności
 - `src/labels/triple_barrier.py` — etykiety z `t1`, `overlap_fraction`,
   `effective_sample_size`
+- `src/validation/` — `cpcv.py` (grupy = całe dni, purge po `t1` +
+  podłoga 10 dni rob., embargo 5 dni od ostatniego `t1` testu),
+  `dsr.py` (PSR/DSR, `n_obs` = efektywne n), `pbo.py` (CSCV, N ≥ 2)
+
+Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
+- Próg `deflated_sharpe_min: 0.0` jest pusty — DSR to prawdopodobieństwo
+  ∈ [0,1]. Do wyboru: DSR ≥ 0,5 (≡ SR̂ ≥ SR*₀) albo 0,95 (konwencja
+  z literatury). Pole jest `frozen: true`.
+- Spec §10.1: 6/2 daje 15 **podziałów**, ale 5 **ścieżek**, nie 15.
+- PBO wymaga ≥ 2 wariantów — siatka wrażliwości wokół {55, 2.0, 4.0}
+  musi zostać prerejestrowana przed pierwszym uruchomieniem.
 
 Ustalenia z danych:
 - Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
