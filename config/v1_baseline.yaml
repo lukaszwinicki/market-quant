@@ -262,6 +262,18 @@ signal_v1a:
     sl_multiple: 2.0
     tp_multiple: 4.0
 
+  # ADR-028: jeden parametr naraz, ~±25%. Raportowany jest ZAWSZE
+  # baseline; siatka służy tylko PBO i testowi płaskowyżu. Każdy wariant
+  # liczy się do N w DSR (ADR-029).
+  sensitivity_grid:
+    - {name: baseline, donchian_lookback: 55, sl_multiple: 2.0, tp_multiple: 4.0}
+    - {name: D-,       donchian_lookback: 40, sl_multiple: 2.0, tp_multiple: 4.0}
+    - {name: D+,       donchian_lookback: 70, sl_multiple: 2.0, tp_multiple: 4.0}
+    - {name: S-,       donchian_lookback: 55, sl_multiple: 1.5, tp_multiple: 4.0}
+    - {name: S+,       donchian_lookback: 55, sl_multiple: 2.5, tp_multiple: 4.0}
+    - {name: T-,       donchian_lookback: 55, sl_multiple: 2.0, tp_multiple: 3.0}
+    - {name: T+,       donchian_lookback: 55, sl_multiple: 2.0, tp_multiple: 5.0}
+
   # Progi ustalone z góry i NIETYKALNE
   frozen_thresholds:
     mom_480_min: 0.0
@@ -464,12 +476,15 @@ validation:
     frozen: true
     expectancy_net_R_min: 0.10
     t_stat_min: 2.0
-    deflated_sharpe_min: 0.0
+    deflated_sharpe_min: 0.95           # ADR-027 (było 0.0 — puste, DSR ∈ [0,1])
     pbo_max: 0.30
     positive_at_cost_multiple: 2.0
     min_instruments_positive: 4          # z 6 w kohorcie A
     min_subperiods_positive: 2           # z 3
     parameter_sensitivity: "plateau, nie szpikulec"
+    # ADR-028: każdy sąsiad z signal_v1a.sensitivity_grid ma E[R] tego
+    # samego znaku co baseline i >= 50% jego wartości.
+    plateau_min_fraction_of_baseline: 0.5
 
   leakage_checklist:
     - "normalizacje w oknie rozszerzającym, tylko przeszłość"
@@ -580,7 +595,7 @@ contingency_after_gate_2_failure:
   on_failure: "Projekt się kończy."
 
 kill_global:
-  max_trials_before_gate_2: 50
+  max_trials_before_gate_2: 50          # N z ADR-029: warianty w przebiegach `strategy`
   max_months_before_gate_2: 4
   leakage_rule: >
     Konieczność złamania któregokolwiek punktu z leakage_checklist,
