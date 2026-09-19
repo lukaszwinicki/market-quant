@@ -44,6 +44,7 @@ from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
+from src.data import calendar_jp as jp  # noqa: E402
 from src.data import calendar_ons as ons  # noqa: E402
 from src.data import calendar_rba as rba  # noqa: E402
 from src.data import calendar_statcan as statcan  # noqa: E402
@@ -83,6 +84,8 @@ def fetch_bytes(url: str, cache: Path) -> bytes:
     if path.exists():
         return path.read_bytes()
     data = urlopen_retry(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}))
+    if data[:2] == b"\x1f\x8b":          # kopie z Wayback bywają spakowane gzipem
+        data = gzip.decompress(data)
     if not data:
         raise RuntimeError(f"{url}: pusta odpowiedź")
     cache.mkdir(parents=True, exist_ok=True)
@@ -556,9 +559,29 @@ def build_rba(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
+def build_jp(years: range) -> pl.DataFrame:
+    """CPI Japonii: daty i godziny z plików harmonogramu Statistics Bureau."""
+    cache = RAW / "jp"
+    # Kopie w kolejności rosnącej daty zapisu: późniejsza poprawia przesunięty termin.
+    times: dict[str, dt.datetime] = {}
+    for stamp, url in sorted(jp.SCHEDULE_SNAPSHOTS):
+        snapshot = jp.snapshot_url(stamp, url)
+        times |= jp.release_times_utc(jp.decode(fetch_bytes(snapshot, cache)), snapshot)
+    events = [{"timestamp_utc": t, "currency": "JPY", "name": "JP_CPI", "rank": "HIGH",
+               "source": jp.CURRENT_XML} for t in sorted(times.values())
+              if years.start <= t.astimezone(jp.TOKYO).year <= years.stop - 1]
+    per_year = pl.Series([e["timestamp_utc"].astimezone(jp.TOKYO).year for e in events]).value_counts()
+    if short := sorted((y, n) for y, n in per_year.iter_rows() if n != 12):
+        log.warning("Statistics Bureau JP_CPI: lata bez 12 publikacji: %s", short)
+    hours = pl.Series([e["timestamp_utc"].astimezone(jp.TOKYO).strftime("%H:%M") for e in events])
+    log.info("Statistics Bureau JP_CPI: %d publikacji, godziny Tokio %s", len(events),
+             dict(sorted(hours.value_counts().iter_rows())))
+    return pl.DataFrame(events, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
            "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan,
-           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba}
+           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba, "jp": build_jp}
 
 
 def main() -> int:
