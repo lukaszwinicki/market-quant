@@ -23,6 +23,34 @@
 # Plik zostaje jako ostatnia deska ratunku dla źródeł bez godzin.
 # =============================================================================
 
+# Źródła poza FRED, które podają tylko datę. Klucz = nazwa użyta w builderze.
+release_times:
+  BOE_RATE:                         # `boe`: data ze strony posiedzenia MPC
+    local_time: "12:00"
+    timezone: "Europe/London"
+    schedule_url: "https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/monetary-policy-summary-and-minutes"
+    quote: "The Monetary Policy summary and minutes are published at 12 noon on a Thursday eight times a year."
+    url_2016: "https://web.archive.org/web/20170110204357/http://www.bankofengland.co.uk/monetarypolicy/Pages/decisions.aspx"
+    quote_2016: "The MPC’s decisions on interest rates are announced on a Thursday at 12 noon."
+    exceptions: >-
+      2025-05-08 o 12:02 BST (https://www.bankofengland.co.uk/news/2025/may/statement-on-the-timing-of-the-mpr-and-mpc-minutes)
+      — w oknie 30/120 min pomijalne.
+    ticks: "GBPUSD M1 2016: największy ruch dnia 14.01 i 04.02 o 12:00 UTC (GMT), 14.04 o 11:00 UTC (BST) w top 2"
+    proposed_by: "cytaty ze stron BoE znalezione przez skrypt/Claude — do sprawdzenia przez użytkownika"
+    verified: false
+
+  ONS_BULLETIN:                     # `ons`: tylko styczeń 2016 (przed kalendarzem ONS)
+    local_time: "09:30"
+    timezone: "Europe/London"
+    schedule_url: "https://www.ons.gov.uk/releasecalendar"
+    quote: null                     # brak zdania-konwencji; dowód poniżej
+    evidence: >-
+      Kalendarz ONS podaje 9:30 dla WSZYSTKICH 11 publikacji CPI i 9 rynku pracy luty–grudzień 2016
+      (pierwsza zmiana na 7:00 w 2020). Biuletyny ze stycznia 2016 podają tylko datę (19.01 CPI, 20.01 praca).
+    ticks: "GBPUSD M1: 2016-01-20 największy ruch o 09:30 UTC; 2016-01-19 09:30 w top 3"
+    proposed_by: "wnioskowanie z sąsiednich publikacji — wymaga cytatu źródła albo świadomej akceptacji"
+    verified: false
+
 fred_release_times:
   US_RETAIL_SALES:
     local_time: null                # do uzupełnienia z source

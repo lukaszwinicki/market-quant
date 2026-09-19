@@ -36,13 +36,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_bls as bls  # noqa: E402
 from src.data import calendar_boc as boc  # noqa: E402
+from src.data import calendar_boe as boe  # noqa: E402
 from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
+from src.data import calendar_ons as ons  # noqa: E402
 from src.data import calendar_statcan as statcan  # noqa: E402
 from src.data.calendar import (  # noqa: E402
-    CALENDAR_SCHEMA, coverage_gaps, load_calendar, validate_calendar,
+    CALENDAR_SCHEMA, coverage_gaps, load_calendar, release_time, validate_calendar,
 )
 
 UTC = dt.timezone.utc
@@ -362,8 +364,114 @@ def build_statcan(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
+def fetch_post(url: str, form: list[tuple[str, str]], cache: Path) -> str:
+    """Odpowiedź POST (formularz) z cache albo z sieci. Nazwa cache z treści formularza."""
+    import hashlib
+
+    body = urllib.parse.urlencode(form)
+    digest = hashlib.sha256(body.encode()).hexdigest()[:16]
+    path = cache / (re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1]) + f"_{digest}.json")
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    req = urllib.request.Request(url, data=body.encode(), headers={
+        "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        text = r.read().decode("utf-8", errors="replace")
+    if not text.strip():
+        raise RuntimeError(f"{url}: pusta odpowiedź")
+    cache.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    time.sleep(PAUSE_S)
+    return text
+
+
+def release_times_cfg() -> dict:
+    return yaml.safe_load((ROOT / "config" / "calendar_times.yaml").read_text())["release_times"]
+
+
+def build_boe(years: range) -> pl.DataFrame:
+    """Decyzje BoE: daty ze stron posiedzeń MPC, godzina z calendar_times.yaml."""
+    cache = RAW / "boe"
+    scheduled, skipped = set(), set()
+    for page in range(1, 50):
+        results = json.loads(fetch_post(boe.LISTING_API, boe.LISTING_FORM + [("Page", str(page))],
+                                        cache))["Results"]
+        if 'href="' not in results:
+            break
+        s, o = boe.listing_pages(results)
+        scheduled |= set(s)
+        skipped |= set(o)
+    for url in sorted(skipped):
+        if any(f"/{y}/" in url for y in years):
+            log.info("BoE: pomijam nieplanowe %s", url)
+    days = {}
+    for url in sorted(scheduled):
+        year = int(url.rsplit("/", 2)[1])
+        if years.start <= year <= years.stop - 1:
+            day = boe.published_on(fetch(url, cache), url)
+            if day.strftime("%B").lower() not in url.rsplit("/", 1)[1]:
+                raise RuntimeError(f"{url}: publikacja {day} w innym miesiącu niż posiedzenie")
+            if day in days:
+                raise RuntimeError(f"BoE {day}: dwie strony — {days[day]}, {url}")
+            days[day] = url
+    try:
+        at, tz = release_time(release_times_cfg()["BOE_RATE"], "BOE_RATE")
+    except PermissionError as e:
+        log.warning("%s — pomijam %d posiedzeń", e, len(days))
+        return pl.DataFrame(schema=CALENDAR_SCHEMA)
+    rows = [{"timestamp_utc": dt.datetime.combine(d, at, tzinfo=tz).astimezone(UTC),
+             "currency": "GBP", "name": "BOE_RATE", "rank": "HIGH", "source": url}
+            for d, url in sorted(days.items())]
+    counts = pl.Series([d.year for d in days]).value_counts()
+    log.info("BoE BOE_RATE: %d posiedzeń, per rok %s", len(rows), dict(sorted(counts.iter_rows())))
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
+def build_ons(years: range) -> pl.DataFrame:
+    """UK CPI i rynek pracy: kalendarz ONS z godziną każdej publikacji (od 02.2016)."""
+    cache = RAW / "ons"
+    times = release_times_cfg()
+    rows = []
+    for name in ons.KEYWORDS:
+        events = []
+        for y in years:
+            items, page = [], 1
+            while True:
+                html = fetch(ons.calendar_url(name, y, page), cache)
+                items += ons.calendar_items(html)
+                if len(items) >= ons.result_count(html) or page >= 20:
+                    break
+                page += 1
+            if len(items) != ons.result_count(html):
+                raise RuntimeError(f"ONS {name} {y}: {len(items)} pozycji z {ons.result_count(html)}")
+            events += [{"timestamp_utc": t, "currency": "GBP", "name": name, "rank": "HIGH",
+                        "source": url} for t, url in ons.release_times_utc(items, name)]
+        if years.start <= ons.FIRST_CALENDAR_DAY.year <= years.stop - 1:
+            url = ons.JAN_2016_BULLETINS[name]
+            day = ons.bulletin_release_date(fetch(url, cache), url)
+            if day >= ons.FIRST_CALENDAR_DAY:
+                raise RuntimeError(f"{url}: {day} — biuletyn miał być sprzed kalendarza")
+            try:
+                at, tz = release_time(times["ONS_BULLETIN"], "ONS_BULLETIN")
+                events.append({"timestamp_utc": dt.datetime.combine(day, at, tzinfo=tz)
+                               .astimezone(UTC), "currency": "GBP", "name": name,
+                               "rank": "HIGH", "source": url})
+            except PermissionError as e:
+                log.warning("%s — brak publikacji %s z %s", e, name, day)
+        per_year = pl.Series([e["timestamp_utc"].year for e in events]).value_counts()
+        if short := sorted((y, n) for y, n in per_year.iter_rows() if n != 12):
+            log.warning("ONS %s: lata bez 12 publikacji (rok, liczba): %s", name, short)
+        hours = pl.Series([e["timestamp_utc"].astimezone(ons.LONDON).strftime("%Y %H:%M")
+                           for e in events])
+        log.info("ONS %s: %d publikacji, rok i godzina Londyn %s", name, len(events),
+                 dict(sorted(hours.value_counts().iter_rows())))
+        rows += events
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
-           "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan}
+           "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan,
+           "boe": build_boe, "ons": build_ons}
 
 
 def main() -> int:

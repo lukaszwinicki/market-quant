@@ -26,6 +26,8 @@ from __future__ import annotations
 import datetime as dt
 from zoneinfo import ZoneInfo
 
+from src.data.calendar import release_time  # noqa: F401  (wspólne dla źródeł bez godzin)
+
 UTC = dt.timezone.utc
 
 # nazwa serii kalendarza → (seria FRED, id publikacji FRED).
@@ -48,16 +50,6 @@ def first_release_dates(observations: list[dict]) -> list[dt.date]:
     informacja o braku danych, a rynek i tak na nią czekał; liczymy go.
     """
     return sorted({dt.date.fromisoformat(o["realtime_start"]) for o in observations})
-
-
-def release_time(entry: dict, name: str) -> tuple[dt.time, ZoneInfo]:
-    """Godzina i strefa z `calendar_times.yaml`. Niepotwierdzona = błąd."""
-    if not entry.get("verified"):
-        raise PermissionError(f"{name}: godzina niepotwierdzona (verified: false)")
-    if not entry.get("local_time") or not entry.get("quote"):
-        raise ValueError(f"{name}: potwierdzona godzina wymaga local_time i cytatu ze źródła")
-    hh, mm = map(int, entry["local_time"].split(":"))
-    return dt.time(hh, mm), ZoneInfo(entry["timezone"])
 
 
 def events_for(name: str, dates: list[dt.date], at: dt.time, tz: ZoneInfo,

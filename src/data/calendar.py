@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import polars as pl
@@ -97,6 +98,17 @@ def validate_calendar(events: pl.DataFrame) -> pl.DataFrame:
     if dup.any():
         raise ValueError(f"{int(dup.sum())} zduplikowanych zdarzeń")
     return events.select(list(CALENDAR_SCHEMA)).sort("timestamp_utc")
+
+
+def release_time(entry: dict, name: str) -> tuple[dt.time, ZoneInfo]:
+    """Godzina i strefa z `config/calendar_times.yaml` — dla źródeł, które
+    podają tylko datę (ADR-032). Niepotwierdzona przez użytkownika = błąd."""
+    if not entry.get("verified"):
+        raise PermissionError(f"{name}: godzina niepotwierdzona (verified: false)")
+    if not entry.get("local_time") or not entry.get("quote"):
+        raise ValueError(f"{name}: potwierdzona godzina wymaga local_time i cytatu ze źródła")
+    hh, mm = map(int, entry["local_time"].split(":"))
+    return dt.time(hh, mm), ZoneInfo(entry["timezone"])
 
 
 def load_calendar(paths: list[Path]) -> pl.DataFrame:
