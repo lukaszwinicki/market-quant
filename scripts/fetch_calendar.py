@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_bls as bls  # noqa: E402
 from src.data import calendar_census as census  # noqa: E402
+from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
 from src.data.calendar import (  # noqa: E402
@@ -275,8 +276,33 @@ def build_census(years: range) -> pl.DataFrame:
     return pl.DataFrame(events, schema=CALENDAR_SCHEMA)
 
 
+def build_ecb(years: range) -> pl.DataFrame:
+    """Decyzje EBC i konferencje — konferencja z komunikatu, decyzja wg ecb.pr220627."""
+    cache = RAW / "ecb"
+    rows = []
+    for y in years:
+        meetings = 0
+        for day, url in ecb.decision_releases(fetch(ecb.index_url(y), cache)):
+            if day.year != y:
+                continue
+            times = ecb.meeting_times_utc(fetch(url, cache), day, url)
+            if times is None:
+                log.info("EBC %s: bez konferencji — pomijam (%s)", day, url)
+                continue
+            decision, conf = times
+            rows += [
+                {"timestamp_utc": decision, "currency": "EUR", "name": "ECB_RATE",
+                 "rank": "HIGH", "source": url},
+                {"timestamp_utc": conf, "currency": "EUR", "name": "ECB_PRESS_CONF",
+                 "rank": "HIGH", "source": url},
+            ]
+            meetings += 1
+        log.info("EBC %d: %d posiedzeń z konferencją", y, meetings)
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
-           "census": build_census}
+           "census": build_census, "ecb": build_ecb}
 
 
 def main() -> int:
