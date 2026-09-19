@@ -433,6 +433,84 @@ Każdy inny brak danych przed barierą pozostaje `NO_DATA`, żeby awarie feedu n
 
 ---
 
+## ADR-027 — Próg DSR na bramce 2: 0,95
+
+**Status:** ACCEPTED · 2026-09-19 · **Zmienia:** `validation.acceptance_thresholds.deflated_sharpe_min` (`frozen: true`) z 0.0 na 0.95
+
+**Kontekst:** DSR to prawdopodobieństwo z przedziału [0, 1]. Próg „DSR ≥ 0” (spec §10.3, config) jest zawsze spełniony, więc kryterium nic nie odrzucało. Najpewniej miało oznaczać „deflowany Sharpe ≥ 0”, czyli SR̂ ≥ SR*₀, co odpowiada DSR ≥ 0,5.
+
+**Decyzja:** `deflated_sharpe_min: 0.95`. Wynik musi dawać 95% pewności, że prawdziwy Sharpe przekracza oczekiwane maksimum z N prób o zerowym Sharpe'ie.
+
+**Uzasadnienie:** DSR ≥ 0,5 to wynik lepszy od mediany maksimum z N prób szumu, czyli na granicy szumu. Ciężar dowodu leży po stronie H₁, a prior jest niski. 0,95 to konwencja z literatury (Bailey & López de Prado 2014), spójna z progiem t ≥ 2.
+
+**Unieważnienie:** zmienia się `frozen_sha256`. Poprzedni hash: `eac58655ffb32bc9f9dc54eea8cfef6602095d4a5818e2fd3e85c8a9dc2e3250`. Nie ma jeszcze żadnego wyniku strategii. Jedyny przebieg na starym hashu (`20260919T134506Z-c4710e`, bramka 0) nie zależy od progów bramki 2 i jest i tak nieaktualny po ADR-026.
+
+---
+
+## ADR-028 — Siatka wrażliwości: jeden parametr naraz, 7 wariantów; definicja płaskowyżu
+
+**Status:** ACCEPTED · 2026-09-19 · **Doprecyzowuje:** §10.3 „Wrażliwość parametryczna: płaskowyż, nie szpikulec”, wymóg N ≥ 2 w PBO
+
+**Kontekst:** PBO (CSCV) mierzy proces wyboru i wymaga co najmniej 2 wariantów. Test płaskowyżu nie miał zdefiniowanych ani wariantów, ani kryterium. Oba trzeba ustalić przed pierwszym uruchomieniem V1a.
+
+**Decyzja:** siatka jest prerejestrowana w `signal_v1a.sensitivity_grid`: baseline plus po jednym kroku ~±25% na każdym parametrze swobodnym, pozostałe parametry na baseline.
+
+| Wariant | donchian_lookback | sl_multiple | tp_multiple |
+|---|---|---|---|
+| baseline | 55 | 2.0 | 4.0 |
+| D− / D+ | 40 / 70 | 2.0 | 4.0 |
+| S− / S+ | 55 | 1.5 / 2.5 | 4.0 |
+| T− / T+ | 55 | 2.0 | 3.0 / 5.0 |
+
+**Płaskowyż:** każdy z 6 sąsiadów ma expectancy netto tego samego znaku co baseline i ≥ 50% jego wartości. Jeden sąsiad poniżej oznacza szpikulec, czyli bramka 2 nie przechodzi.
+
+**Rola wariantów:** raportowany wynik to zawsze baseline. Siatka nie służy do wyboru parametrów, tylko do PBO i testu płaskowyżu. Mimo to każdy wariant liczy się do N w DSR (ADR-029): policzony wariant to wariant, który mógł wpłynąć na decyzję.
+
+**Odrzucone:** pełna siatka 3×3×3 = 27. Lepiej widać interakcje, ale N w DSR rośnie do 27 na przebieg, a obliczenia trwają ~4× dłużej.
+
+---
+
+## ADR-029 — Licznik prób: tylko warianty strategii; kategoria przebiegu deklarowana przed wynikiem
+
+**Status:** ACCEPTED · 2026-09-19 · **Doprecyzowuje:** ADR-014, `kill_global.max_trials_before_gate_2`
+
+**Kontekst:** `n_trials()` liczył każdy wpis `start`, łącznie z kontrolami losowymi i przebiegami infrastruktury. Kontrola losowa nie jest kandydatem na strategię. Wliczanie jej zawyża N i SR*₀ w DSR oraz zjada limit 50 prób powtórkami bramki 0. Z drugiej strony filtrowanie po fakcie byłoby ręcznym pominięciem (`manual_skip_allowed: false`).
+
+**Decyzja:**
+1. `start_run()` wymaga `kind` ∈ {`strategy`, `control`, `infra`}. Kategoria jest zapisywana we wpisie `start`, czyli **przed** jakimkolwiek wynikiem, i nie da się jej zmienić (rejestr jest append-only).
+2. Przebieg `strategy` deklaruje `n_variants` (np. 7 dla siatki z ADR-028). Bez deklaracji liczy się 1.
+3. **N** = suma `n_variants` po wszystkich przebiegach `strategy`, także przerwanych i zakończonych błędem. To samo N trafia do DSR i do limitu 50 prób.
+4. `control` i `infra` są logowane jak dotąd, ale do N się nie liczą.
+5. Wpisy bez `kind` (sprzed tej decyzji) liczą się jako `strategy`: konserwatywnie i bez etykietowania wstecz. Dotyczy to jednego przebiegu (`20260919T134506Z-c4710e`), który dodaje +1 do N.
+
+**Zabezpieczenie:** kontrola, która ocenia sygnał V1a albo którykolwiek jego wariant, jest przebiegiem `strategy`, niezależnie od celu. `control` oznacza wyłącznie wejścia niezależne od sygnału (losowe, buy & hold, koszyk benchmarkowy).
+
+---
+
+## ADR-030 — Horyzont transakcji nie przekracza granicy splitu
+
+**Status:** ACCEPTED · 2026-09-19
+
+**Kontekst:** Wejście z końca grudnia 2021 z horyzontem 10 dni roboczych rozstrzyga się na cenach ze splitu walidacyjnego. Wejście z końca 2023 rozstrzyga się na cenach z zapieczętowanego hold-outu (`load_m1` je zablokuje). W CPCV na splicie research oznaczałoby to zajrzenie w walidację.
+
+**Decyzja:** w danym splicie wejście jest dozwolone tylko wtedy, gdy cały horyzont (decyzja + 10 dni roboczych) mieści się przed końcem splitu. Dotyczy to wszystkich granic: research → validation, validation → hold-out, hold-out → koniec danych. Etykieta się nie zmienia. To ta sama reguła, którą stosuje już `gate0.eligible_candidates`.
+
+**Koszt:** ~2 tygodnie wejść na końcu każdego splitu.
+
+**Odrzucone:** ucinanie horyzontu na granicy. Zachowuje wejścia, ale części transakcji daje krótszy horyzont i inny rozkład R, czyli dwie różne etykiety w jednej próbie.
+
+---
+
+## ADR-031 — Korekta spec §10.1: CPCV 6/2 daje 15 podziałów i 5 ścieżek
+
+**Status:** ACCEPTED · 2026-09-19 · **Koryguje:** PROJECT_SPEC §10.1, komentarz `validation.cpcv.n_test_groups` w configu
+
+**Kontekst:** Spec podaje „2 grupy testowe → 15 ścieżek”. To pomyłka. C(6, 2) = 15 to liczba **podziałów** trening/test. Każda grupa jest testowa w C(5, 1) = 5 podziałach, więc da się złożyć φ = 15 · 2 / 6 = **5 ścieżek** backtestu (López de Prado 2018, rozdz. 12).
+
+**Decyzja:** parametry bez zmian (6 grup, 2 testowe). Obowiązuje interpretacja: 15 podziałów, 5 ścieżek. `src/validation/cpcv.py` już tak liczy (`n_splits`, `n_paths`). Rozkład wyniku ścieżkowego na bramce 2 ma 5 punktów, nie 15. Wnioski o jego rozrzucie trzeba formułować ostrożnie.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
