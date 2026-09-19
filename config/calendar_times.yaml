@@ -1,0 +1,59 @@
+# =============================================================================
+# calendar_times.yaml — godziny publikacji dla źródeł, które podają tylko DATĘ
+# =============================================================================
+#
+# ADR-032: godzina zdarzenia musi pochodzić ze źródła oficjalnego. Gdy źródło
+# daty (tu: FRED/ALFRED) jej nie podaje, godzina jest prerejestrowana TUTAJ,
+# z adresem strony i cytatem, i potwierdzona ręcznie przez użytkownika
+# (`verified: true`). Dopóki `verified: false`, `scripts/fetch_calendar.py`
+# NIE generuje zdarzeń serii — raport pokrycia pokaże ją jako brakującą.
+#
+# Weryfikacja wymaga DWÓCH stron:
+#   - bieżący harmonogram (godzina dziś),
+#   - dowolna publikacja z 2016 r. (godzina na początku okresu testu).
+# Jeśli godziny się różnią, seria potrzebuje przedziałów czasu — nie wpisywać
+# jednej wartości.
+#
+# `proposed_by` mówi, skąd wzięła się propozycja. LLM nie jest źródłem.
+# =============================================================================
+
+fred_release_times:
+  US_CPI:
+    local_time: null                # do uzupełnienia z source
+    timezone: "America/New_York"
+    schedule_url: "https://www.bls.gov/schedule/news_release/cpi.htm"
+    quote: null                      # do uzupełnienia przy weryfikacji
+    proposed_by: "do potwierdzenia — bls.gov blokuje skrypty (403)"
+    verified: false
+
+  US_NFP:
+    local_time: null                # do uzupełnienia z source
+    timezone: "America/New_York"
+    schedule_url: "https://www.bls.gov/schedule/news_release/empsit.htm"
+    quote: null
+    proposed_by: "do potwierdzenia — bls.gov blokuje skrypty (403)"
+    verified: false
+
+  US_PCE:
+    local_time: "08:30"
+    timezone: "America/New_York"
+    schedule_url: "https://www.bea.gov/news/schedule"
+    quote: "Personal Income and Outlays, August 2026 October 6 8:30 AM"
+    proposed_by: "bea.gov/news/schedule, pobrane 2026-09-19 (harmonogram bieżący)"
+    verified: false
+
+  US_RETAIL_SALES:
+    local_time: null                # do uzupełnienia z source
+    timezone: "America/New_York"
+    schedule_url: "https://www.census.gov/economic-indicators/"
+    quote: null
+    proposed_by: "do potwierdzenia — godzina nie znaleziona w treści strony"
+    verified: false
+
+  US_GDP_ADVANCE:
+    local_time: "08:30"
+    timezone: "America/New_York"
+    schedule_url: "https://www.bea.gov/news/schedule"
+    quote: "GDP (Advance Estimate), 3rd Quarter 2026 October 29 8:30 AM"
+    proposed_by: "bea.gov/news/schedule, pobrane 2026-09-19 (harmonogram bieżący)"
+    verified: false

@@ -9,17 +9,22 @@ ponownie — wynik da się odtworzyć bez sieci. Wynik: `data/calendar/<źródł
 zwalidowany (`validate_calendar`). Na końcu raport pokrycia serii HIGH
 dla walut kohorty A.
 
-Zaimplementowane źródła: fomc. Pozostałe serie — patrz „Stan” w CLAUDE.md.
+Zaimplementowane źródła: fomc, fred (dane USA; wymaga FRED_API_KEY w
+środowisku albo w `.env`, oraz potwierdzonych godzin w
+`config/calendar_times.yaml`). Pozostałe serie — patrz „Stan” w CLAUDE.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import logging
+import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -29,6 +34,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data import calendar_fomc as fomc  # noqa: E402
+from src.data import calendar_fred as fred  # noqa: E402
 from src.data.calendar import (  # noqa: E402
     CALENDAR_SCHEMA, coverage_gaps, load_calendar, validate_calendar,
 )
@@ -79,7 +85,59 @@ def build_fomc(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
-SOURCES = {"fomc": build_fomc}
+def fred_key() -> str:
+    """Klucz z środowiska albo z `.env`. Nigdy nie wypisywany."""
+    if key := os.environ.get("FRED_API_KEY"):
+        return key
+    env = ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith("FRED_API_KEY="):
+                return line.split("=", 1)[1].strip().strip("'\"")
+    raise RuntimeError("brak FRED_API_KEY (środowisko albo .env)")
+
+
+def fred_get(endpoint: str, cache: Path, **params) -> dict:
+    """Zapytanie FRED z cache. Nazwa pliku cache i log bez klucza."""
+    tag = endpoint.replace("/", "_") + "_" + "_".join(f"{k}-{v}" for k, v in sorted(params.items()))
+    path = cache / (re.sub(r"[^A-Za-z0-9._-]", "_", tag) + ".json")
+    if path.exists():
+        return json.loads(path.read_text())
+    q = urllib.parse.urlencode({"api_key": fred_key(), "file_type": "json", **params})
+    with urllib.request.urlopen(f"https://api.stlouisfed.org/fred/{endpoint}?{q}", timeout=30) as r:
+        data = json.load(r)
+    cache.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+    time.sleep(PAUSE_S)
+    return data
+
+
+def build_fred(years: range) -> pl.DataFrame:
+    cache = RAW / "fred"
+    times = yaml.safe_load((ROOT / "config" / "calendar_times.yaml").read_text())
+    times = times["fred_release_times"]
+    start, end = dt.date(years.start, 1, 1), dt.date(years.stop - 1, 12, 31)
+    rows = []
+    for name, (series_id, release_id) in fred.SERIES.items():
+        rel = fred_get("series/release", cache, series_id=series_id)["releases"][0]
+        if rel["id"] != release_id:
+            raise RuntimeError(f"{series_id}: publikacja {rel['id']}, oczekiwana {release_id}")
+        obs = fred_get("series/observations", cache, series_id=series_id,
+                       realtime_start=f"{years.start - 1}-01-01", realtime_end="9999-12-31",
+                       output_type=4, observation_start=f"{years.start - 1}-01-01")["observations"]
+        dates = fred.first_release_dates(obs)
+        try:
+            at, tz = fred.release_time(times[name], name)
+        except PermissionError as e:
+            log.warning("%s — pomijam (%d dat czeka na godzinę)", e,
+                        sum(start <= d <= end for d in dates))
+            continue
+        rows += fred.events_for(name, dates, at, tz, start, end)
+        log.info("FRED %s: %d publikacji", name, sum(start <= d <= end for d in dates))
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
+SOURCES = {"fomc": build_fomc, "fred": build_fred}
 
 
 def main() -> int:
