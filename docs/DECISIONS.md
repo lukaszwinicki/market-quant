@@ -511,6 +511,44 @@ Każdy inny brak danych przed barierą pozostaje `NO_DATA`, żeby awarie feedu n
 
 ---
 
+## ADR-032 — Blackout: kierunek okna, tylko zdarzenia planowane, terminy wyłącznie ze źródeł
+
+**Status:** ACCEPTED · 2026-09-19 · **Koryguje:** PROJECT_SPEC §7.2 (formuła okna) · **Doprecyzowuje:** ADR-005, sekcję `blackout`
+
+**Kontekst:** Spec §7.2 definiuje blackout jako „zdarzenie w [t − 30 min, t + 120 min]”, co blokuje wejścia od 120 min **przed** zdarzeniem do 30 min **po** nim. Config (`window_before_minutes: 30`, `window_after_minutes: 120`) mówi odwrotnie. Spec nie mówi też nic o decyzjach nadzwyczajnych ani o pochodzeniu godzin publikacji.
+
+**Decyzja:**
+1. **Kierunek:** wejście w chwili t jest zablokowane, gdy dla którejkolwiek waluty pary istnieje zdarzenie HIGH o czasie e takim, że `e − 30 min ≤ t ≤ e + 120 min`. To odczyt zgodny z nazwami pól configu: 30 min przed publikacją, 2 h po niej. Formuła w spec §7.2 była odwrócona.
+2. **Tylko zdarzenia planowane.** Decyzje nadzwyczajne (np. Fed 2020-03-03 i 2020-03-15) nie wchodzą do kalendarza. Blackout przed zdarzeniem, którego nikt nie zapowiedział, to look-ahead.
+3. **Data i godzina pochodzą wyłącznie ze źródła oficjalnego**, parsowane automatycznie przez skrypt, z URL-em źródła w każdym wierszu. Nie wolno wpisywać ręcznie ani generować przez LLM terminów, godzin ani „stałych konwencji” (np. „CPI zawsze o 8:30 ET”). Jeśli źródło podaje tylko datę, konwencję godziny trzeba prerejestrować z cytatem ze źródła i zweryfikować ręcznie.
+4. **Pokrycie jest warunkiem wejścia do backtestu.** Każda seria HIGH wymagana dla walut kohorty ma mieć zdarzenia w każdym roku badanego okresu. Brak serii nie może po cichu oznaczać „brak blackoutu”. Backtest bez pełnego pokrycia jest odrzucany.
+
+**Zawartość kalendarza:** wyłącznie `(timestamp_utc, currency, name, rank, source)`. Kolumny z wartościami (actual, consensus, forecast, previous, surprise) są odrzucane przy wczytaniu.
+
+---
+
+## ADR-033 — Interpretacja reguły V1a i warunków NO TRADE
+
+**Status:** ACCEPTED · 2026-09-19 · **Doprecyzowuje:** PROJECT_SPEC §7.1, §7.4, §8
+
+**Decyzja (każdy punkt to odczyt miejsca, w którym tekst był niejednoznaczny):**
+
+| Punkt | Odczyt |
+|---|---|
+| Short „symetrycznie” | `mom_480 < 0` i `donch_pos < 1 − 0,80 = 0,20`. Nierówności ostre, jak w §7.1 |
+| `vol_pct_252` na granicy | NO TRADE, gdy `> 0,95` (§7.4, `vol_pct_max`). Wartość równa 0,95 jest dozwolona. Brak wartości (rozgrzewka) = NO TRADE z powodem `warmup` |
+| Limit 2 R netto | **Per blok walutowy**, ρ = 1: ekspozycje walut w bloku się sumują (`currency_blocks`). Long base = +1 R base, −1 R quote. Wejście dozwolone, jeśli po nim \|netto bloku\| ≤ 2 R dla obu walut pary |
+| Limit portfela 6 R | Suma otwartego ryzyka, 1 R na pozycję. W kohorcie A (6 par × max 1 pozycja) nigdy nie wiąże |
+| Otwarta pozycja na parze | Pozycja zajmuje parę od wejścia do `t1` z symulatora. Nowe wejście jest możliwe dopiero przy decyzji po `t1` |
+| Rollover | Decyzja w [16:45, 17:15] czasu Nowego Jorku, obie granice włącznie, z DST przez `America/New_York` |
+| Piątek | Decyzja w piątek o 15:00 czasu NY lub później = NO TRADE. Granica włącznie, konserwatywnie |
+| Luka w danych | Więcej niż 2 brakujące bary H1 między kolejnymi barami, w czasie gdy rynek działa (zamknięcie wg `market_closed_between`, ADR-026), w ostatnich 480 barach |
+| Yieldy w pkt 7 | Dotyczą przebiegów, które używają yieldów (V1b). V1a ich nie czyta, więc warunek jest nieaktywny i nie może blokować |
+| Granica splitu | ADR-030: horyzont musi mieścić się w splicie |
+| Logowanie | Każdy zamknięty bar H1 każdej pary dostaje wiersz decyzji z akcją i powodem. Priorytet powodu: `warmup` → `data_gap` → `no_signal` → numer z listy §7.4 → `split_boundary` |
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
