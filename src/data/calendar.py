@@ -145,6 +145,27 @@ def coverage_gaps(events: pl.DataFrame, currencies: list[str],
     return gaps
 
 
+def require_coverage(events: pl.DataFrame, symbols: list[str],
+                     start: dt.datetime, end: dt.datetime) -> None:
+    """Przerwij, jeśli kalendarz nie pokrywa wszystkich serii HIGH okresu.
+
+    Brak serii wygląda w `blackout()` identycznie jak brak zdarzenia, więc
+    przebieg na dziurawym kalendarzu po cichu handlowałby w publikacjach
+    (ADR-032 pkt 4). Wołane przez przebiegi, które używają blackoutu —
+    zanim policzą cokolwiek.
+    """
+    currencies = sorted({c for s in symbols for c in pair_currencies(s)})
+    gaps = coverage_gaps(events, currencies, start, end)
+    if not gaps:
+        return
+    per_series: dict[tuple[str, str], list[int]] = {}
+    for currency, name, year in gaps:
+        per_series.setdefault((currency, name), []).append(year)
+    opis = "; ".join(f"{c} {n}: {years}" for (c, n), years in sorted(per_series.items()))
+    raise ValueError(f"kalendarz nie pokrywa {len(per_series)} serii w okresie "
+                     f"{start:%Y-%m-%d}..{end:%Y-%m-%d} — {opis}")
+
+
 def blackout(decision_ts: pl.Series, symbol: str, events: pl.DataFrame,
              before_min: int, after_min: int) -> pl.Series:
     """True, gdy e − before ≤ t ≤ e + after dla zdarzenia HIGH waluty pary.

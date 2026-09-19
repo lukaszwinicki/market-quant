@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 
 from src.data.calendar import (
-    HIGH_SERIES, blackout, coverage_gaps, validate_calendar,
+    HIGH_SERIES, blackout, coverage_gaps, require_coverage, validate_calendar,
 )
 
 UTC = dt.timezone.utc
@@ -101,3 +101,25 @@ def test_short_edge_fragment_of_a_year_is_not_required():
     end = dt.datetime(2017, 1, 20, tzinfo=UTC)          # 19 dni 2017
     ev = cal(full_year(2016, ["USD"]))
     assert coverage_gaps(ev, ["USD"], start, end) == []
+
+
+# --- twardy warunek przed backtestem (ADR-032 pkt 4) --------------------------
+
+def test_require_coverage_passes_for_a_complete_calendar():
+    start, end = dt.datetime(2016, 1, 1, tzinfo=UTC), dt.datetime(2016, 12, 31, tzinfo=UTC)
+    ev = cal(full_year(2016, ["EUR", "USD"]))
+    require_coverage(ev, ["EURUSD"], start, end)        # brak wyjątku = kalendarz wystarcza
+
+
+def test_require_coverage_names_the_missing_series_and_years():
+    start, end = dt.datetime(2016, 1, 1, tzinfo=UTC), dt.datetime(2017, 12, 31, tzinfo=UTC)
+    ev = cal(full_year(2016, ["EUR", "USD"]) + full_year(2017, ["EUR"]))
+    with pytest.raises(ValueError, match=r"USD FOMC: \[2017\]"):
+        require_coverage(ev, ["EURUSD"], start, end)
+
+
+def test_require_coverage_covers_both_currencies_of_every_symbol():
+    start, end = dt.datetime(2016, 1, 1, tzinfo=UTC), dt.datetime(2016, 12, 31, tzinfo=UTC)
+    ev = cal(full_year(2016, ["EUR", "USD"]))
+    with pytest.raises(ValueError, match="JPY"):
+        require_coverage(ev, ["EURUSD", "USDJPY"], start, end)
