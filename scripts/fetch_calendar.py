@@ -40,6 +40,7 @@ from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
+from src.data import calendar_statcan as statcan  # noqa: E402
 from src.data.calendar import (  # noqa: E402
     CALENDAR_SCHEMA, coverage_gaps, load_calendar, validate_calendar,
 )
@@ -330,8 +331,39 @@ def build_boc(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
+def pdf_first_page(url: str, cache: Path) -> str:
+    import io
+
+    from pypdf import PdfReader
+
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
+    return PdfReader(io.BytesIO(fetch_bytes(url, cache))).pages[0].extract_text()
+
+
+def build_statcan(years: range) -> pl.DataFrame:
+    """CPI Kanady: daty z kalendarza wskaźników, godzina z nagłówka każdego PDF."""
+    cache = RAW / "statcan"
+    key = fetch(statcan.KEY_INDICATORS, cache)
+    rows = []
+    for name in statcan.TITLES:
+        events = []
+        for day, url in statcan.releases(key, name):
+            if years.start <= day.year <= years.stop - 1:
+                if url is None:
+                    raise RuntimeError(f"StatCan {name} {day}: publikacja bez komunikatu")
+                t = statcan.release_time_utc(pdf_first_page(url, cache), day, url)
+                events.append({"timestamp_utc": t, "currency": "CAD", "name": name,
+                               "rank": "HIGH", "source": url})
+        hours = pl.Series([e["timestamp_utc"].astimezone(statcan.ET).strftime("%H:%M")
+                           for e in events])
+        log.info("StatCan %s: %d publikacji, godziny ET %s", name, len(events),
+                 dict(sorted(hours.value_counts().iter_rows())))
+        rows += events
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
-           "census": build_census, "ecb": build_ecb, "boc": build_boc}
+           "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan}
 
 
 def main() -> int:
