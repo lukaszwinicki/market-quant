@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import json
 import logging
 import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -33,6 +35,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.data import calendar_abs as abs_  # noqa: E402
 from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_bls as bls  # noqa: E402
 from src.data import calendar_boc as boc  # noqa: E402
@@ -42,6 +45,7 @@ from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
 from src.data import calendar_ons as ons  # noqa: E402
+from src.data import calendar_rba as rba  # noqa: E402
 from src.data import calendar_statcan as statcan  # noqa: E402
 from src.data.calendar import (  # noqa: E402
     CALENDAR_SCHEMA, coverage_gaps, load_calendar, release_time, validate_calendar,
@@ -57,14 +61,28 @@ PAUSE_S = 1.0
 log = logging.getLogger("fetch_calendar")
 
 
+def urlopen_retry(req: urllib.request.Request, timeout: int = 60) -> bytes:
+    """Treść odpowiedzi; przy odmowie połączenia (limit tempa) ponawia z odczekaniem."""
+    for wait in (15, 30, 60, 120, 0):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except (urllib.error.URLError, TimeoutError) as e:
+            transient = isinstance(getattr(e, "reason", None), (ConnectionRefusedError,
+                                                                TimeoutError))
+            if not wait or not (transient or isinstance(e, TimeoutError)):
+                raise
+            log.info("%s — ponawiam za %ds", e, wait)
+            time.sleep(wait)
+    raise RuntimeError("nieosiągalne")
+
+
 def fetch_bytes(url: str, cache: Path) -> bytes:
     """Plik binarny (PDF) z cache albo z sieci (i do cache)."""
     path = cache / re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1])
     if path.exists():
         return path.read_bytes()
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = r.read()
+    data = urlopen_retry(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}))
     if not data:
         raise RuntimeError(f"{url}: pusta odpowiedź")
     cache.mkdir(parents=True, exist_ok=True)
@@ -79,9 +97,12 @@ def fetch(url: str, cache: Path) -> str:
     path = cache / name
     if path.exists():
         return path.read_text(encoding="utf-8")
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        html = r.read().decode("utf-8", errors="replace")
+    raw = urlopen_retry(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),
+                        timeout=30)
+    # Kopie z Wayback (`…id_/…`) wracają w oryginalnej postaci, czyli często gzipem.
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    html = raw.decode("utf-8", errors="replace")
     if not html.strip():
         raise RuntimeError(f"{url}: pusta odpowiedź")
     cache.mkdir(parents=True, exist_ok=True)
@@ -375,8 +396,7 @@ def fetch_post(url: str, form: list[tuple[str, str]], cache: Path) -> str:
         return path.read_text(encoding="utf-8")
     req = urllib.request.Request(url, data=body.encode(), headers={
         "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        text = r.read().decode("utf-8", errors="replace")
+    text = urlopen_retry(req).decode("utf-8", errors="replace")
     if not text.strip():
         raise RuntimeError(f"{url}: pusta odpowiedź")
     cache.mkdir(parents=True, exist_ok=True)
@@ -469,9 +489,76 @@ def build_ons(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
+def build_abs(years: range) -> pl.DataFrame:
+    """CPI Australii: godzina z każdej strony wydania (ausstats do 06.2020, nowy układ od 09.2019)."""
+    cache = RAW / "abs"
+    first = years.start - 1                      # wydanie za IV kw. wychodzi w styczniu
+    by_period: dict[tuple[str, int], tuple[dt.datetime, str]] = {}
+
+    def add(period: tuple[str, int], t: dt.datetime, url: str) -> None:
+        if period in by_period and by_period[period][0] != t:
+            raise RuntimeError(f"ABS {period}: {by_period[period]} vs {t} {url}")
+        by_period.setdefault(period, (t, url))
+
+    for url in abs_.new_release_urls(fetch(abs_.NEW_LIST, cache)):
+        mon, year = url.rsplit("/", 1)[1][:3], int(url[-4:])
+        if year >= first:
+            add((mon, year), abs_.new_release_time_utc(fetch(url, cache), url), url)
+    # Stare adresy okresów, które ma już nowy serwis, przekierowują na niego —
+    # nie ma czego porównywać, więc ausstats tylko dla wcześniejszych wydań.
+    for url, period in abs_.old_release_urls(fetch(abs_.OLD_LIST, cache)):
+        mon, year = period[:3].lower(), int(period[-4:])
+        if year >= first and (mon, year) not in by_period:
+            add((mon, year), abs_.old_release_time_utc(fetch(url, cache), url), url)
+
+    events = [{"timestamp_utc": t, "currency": "AUD", "name": "AU_CPI", "rank": "HIGH",
+               "source": url} for t, url in sorted(by_period.values())
+              if years.start <= t.year <= years.stop - 1]
+    hours = pl.Series([e["timestamp_utc"].astimezone(abs_.CANBERRA).strftime("%Y %H:%M")
+                       for e in events])
+    log.info("ABS AU_CPI: %d publikacji, rok i godzina Canberra %s", len(events),
+             dict(sorted(hours.value_counts().iter_rows())))
+    return pl.DataFrame(events, schema=CALENDAR_SCHEMA)
+
+
+def build_rba(years: range) -> pl.DataFrame:
+    """Decyzje RBA: daty z listy komunikatów, planowość i godzina z harmonogramu."""
+    cache = RAW / "rba"
+    rows = []
+    for y in years:
+        page_url = rba.decisions_url(y)
+        page = fetch(page_url, cache)
+        decisions = rba.decision_dates(page, y, page_url)
+        if y in rba.NO_SCHEDULE:
+            # Rok bez zapisu harmonogramu: planowość z treści każdego komunikatu.
+            at = rba.announced_at(page, page_url)
+            times, skipped = {}, []
+            for day, url in sorted(decisions.items()):
+                if rba.is_regular_meeting(fetch(rba.release_mirror(url), cache)):
+                    times[day] = dt.datetime.combine(day, at, tzinfo=rba.SYDNEY).astimezone(UTC)
+                else:
+                    skipped.append(day)
+            log.warning("RBA %d: brak zapisu harmonogramu — planowość z treści komunikatów "
+                        "(„%s”), pominięte: %s", y, rba.REGULAR_MEETING, skipped or "brak")
+        else:
+            url = rba.schedule_url(y)
+            times = rba.scheduled_times(fetch(url, cache), y, url)
+            if missing := sorted(set(times) - set(decisions)):
+                raise RuntimeError(f"RBA {y}: harmonogram ma {missing} bez komunikatu decyzji")
+            for day in sorted(set(decisions) - set(times)):
+                log.info("RBA %d: pomijam nieplanowe %s (%s)", y, day, decisions[day])
+        rows += [{"timestamp_utc": t, "currency": "AUD", "name": "RBA_RATE", "rank": "HIGH",
+                  "source": decisions[d]} for d, t in sorted(times.items())]
+    hours = pl.Series([r["timestamp_utc"].astimezone(rba.SYDNEY).strftime("%Y %H:%M")
+                       for r in rows])
+    log.info("RBA RBA_RATE: %d decyzji, rok i godzina Sydney %s", len(rows),
+             dict(sorted(hours.value_counts().iter_rows())))
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
            "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan,
-           "boe": build_boe, "ons": build_ons}
+           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba}
 
 
 def main() -> int:
