@@ -212,7 +212,20 @@ mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
 
-Kalendarz: USD 6/6, EUR 2/3 (brak HICP flash). Brakuje jeszcze 10 serii (raport: `scripts/fetch_calendar.py`):
+Kalendarz: USD 6/6, EUR 2/3 (brak HICP flash). Brakuje jeszcze 10 serii.
+Rozpoznanie (2026-09-19), do kontynuacji:
+- Eurostat HICP flash: API kalendarza `ec.europa.eu/eurostat/o/calendars/
+  eventsJson?start=…T00:00:00Z&end=…&theme=&category=&keywords=&
+  isEuroindicator=&authorInclude=&authorExclude=` (ciasteczko ze strony
+  `news/release-calendar`) — tytuł „Flash estimate inflation euro area”,
+  pole `start` np. `2025-01-07T11:00Z` przy `allDay: true` (czy to UTC czy
+  czas lokalny — sprawdzić na tickach, jak przy EBC). Dane są dla 2025+,
+  dla 2016 i 2019 pusto — starsze lata potrzebują innego źródła. LIMIT:
+  po ~15 szybkich zapytaniach 429 „Quota Exhausted” — pauzy ≥ 2 s
+- BoE: strona „published at 12 noon on a Thursday” (dziś); archiwalne
+  posiedzenia mają inne URL-e (`…/2016/january-2016` = 404) — szukać
+  listy/archiwum. Pozostałe (ONS, BoJ, stat.go.jp, BoC, StatCan, ABS)
+  nierozpoznane; RBA wymaga ręcznego zapisu stron (403) (raport: `scripts/fetch_calendar.py`):
 HICP flash (Eurostat); BoE, UK CPI, UK labour; BoJ, JP CPI; RBA, AU CPI; BoC, CA CPI.
 Dostępność (2026-09-19): Fed, EBC, BoE, BoC, BoJ odpowiadają 200;
 BLS i RBA dają 403 automatom; FRED/ALFRED (daty publikacji US) wymaga
