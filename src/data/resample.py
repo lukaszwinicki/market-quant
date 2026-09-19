@@ -168,6 +168,20 @@ def decision_time_for_bar(bar_label: dt.datetime, freq_seconds: int) -> dt.datet
     return dt.datetime.fromtimestamp(epoch + freq_seconds, tz=UTC)
 
 
+def slice_window(bars: pl.DataFrame, start: dt.datetime, end: dt.datetime) -> pl.DataFrame:
+    """Bary o etykiecie w [start, end], obie granice włącznie.
+
+    Wyszukiwanie binarne zamiast `filter`: filtr przechodzi całą ramkę,
+    a przy latach M1 (miliony wierszy) × tysiącach transakcji × setkach
+    powtórzeń kontroli losowej to dominujący koszt. `bars` MUSI być
+    posortowane po `ts` — wynik to widok (slice), bez kopiowania.
+    """
+    ts = bars.get_column("ts")
+    i = ts.search_sorted(start, side="left")
+    j = ts.search_sorted(end, side="right")
+    return bars.slice(i, max(0, j - i))
+
+
 def validate_bars(bars: pl.DataFrame) -> None:
     """Niezmienniki, których naruszenie oznacza błąd w pipeline, nie na rynku."""
     if bars.is_empty():

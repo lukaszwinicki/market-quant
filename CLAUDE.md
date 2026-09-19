@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (142 testy):
+Gotowe (164 testy):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -131,6 +131,19 @@ Gotowe (142 testy):
   `controls.py` (losowe wejścia dopasowane per (para, kierunek), rozkład
   zerowy, p-value), `bootstrap.py` (bloki 20 dni roboczych, weekend →
   poniedziałek). Test martyngałowy: losowe wejścia dają E[R] = −koszt
+- `src/harness/registry.py` — `start_run(purpose, params)`: katalog
+  `runs/<ts>-<hex>/` (kopia configu, `run.json`, `metrics.json`,
+  `diff.patch` gdy drzewo brudne), wpis `start` do `trials.jsonl` PRZED
+  kodem badawczym, `end` w `finally` (ok/error/interrupted). `n_trials()`
+  = liczba startów, bez filtrów. Hash commita, sha256 configu i osobno
+  sekcji `frozen: true`, commit zamrożenia. `trials.jsonl` nie liczy się
+  jako brudne drzewo
+- `src/harness/market.py` — `load_m1(symbol, start, end, cfg)` czyta tylko
+  potrzebne lata; zakres dotykający hold-outu → `SealedHoldoutError`
+  (wyjście: `unseal=True`, bramka 4). `cost_model_for()` z configu
+  (EURJPY = cross, podłoga 2,5)
+- `slice_window()` w `resample.py` (search_sorted); `label_events` podaje
+  symulatorowi tylko okno [decyzja, bariera czasowa]
 
 Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
 - Próg `deflated_sharpe_min: 0.0` jest pusty — DSR to prawdopodobieństwo
@@ -151,11 +164,15 @@ Ustalenia z danych:
 - `data/raw/dukascopy/EURUSD/2019,2020` — 130 godzin próbek z testów
   dekodera; poprawne, downloader je pominie.
 
-- Wydajność: `label_events` filtruje całe M1 dla każdego zdarzenia.
-  Na latach danych × setkach powtórzeń kontroli losowej to za wolno —
-  harness musi ciąć M1 do okna [ts, ts + horyzont] (np. `search_sorted`).
+- Wydajność: po wycięciu okien ~30 ms/transakcję (EURUSD 2016). Teraz
+  wąskim gardłem jest pętla Pythona po ~14k barach M1 w `_find_exit`.
+  1000 transakcji × 200 powtórzeń ≈ 100 min — jeśli za wolno,
+  wektoryzować wyszukiwanie pierwszego dotknięcia bariery (numpy).
+- Transakcje z końca 2023 z horyzontem w 2024 rozstrzygają się na cenach
+  hold-outu — `load_m1` je zablokuje. Do rozstrzygnięcia przy walidacji.
+- Do decyzji (ADR): czy przebiegi kontroli/infrastruktury liczą się
+  do N w DSR. Rejestr zapisuje `purpose`, `n_trials()` liczy wszystko.
 
-Następne: harness (config + hash gita → `runs/<ts>/`, automatyczny
-append do `trials.jsonl`, wycinanie okien M1) → powtórka testu
-negatywnego bramki 0 na danych wieloletnich (kontrola losowa +
-bootstrap, E[R] vs −`cost_r`).
+Następne: skrypt bramki 0 na harnessie — powtórka testu negatywnego
+na danych wieloletnich (kontrola losowa + bootstrap, E[R] vs −`cost_r`),
+wejścia pogrupowane per symbol z `cost_model_for()`.

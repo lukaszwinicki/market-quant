@@ -42,6 +42,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from ..data.resample import slice_window
 from ..execution.simulator import (
     CostModel, ExitReason, Side, TradeResult, simulate_trade,
 )
@@ -111,7 +112,8 @@ def label_events(
     if events.is_empty():
         return _empty_labels(events)
 
-    m1 = m1.sort("ts")
+    if not m1.get_column("ts").is_sorted():
+        m1 = m1.sort("ts")
     rows = []
 
     for ev in events.iter_rows(named=True):
@@ -120,17 +122,19 @@ def label_events(
         if atr_d1 is None:
             continue                      # brak zmienności dziennej => brak barier
 
-        first = m1.filter(pl.col("ts") >= ev["ts"]).head(1)
-        if first.is_empty():
+        # Symulator dostaje wyłącznie okno [decyzja, bariera czasowa] —
+        # nie widzi niczego po horyzoncie i nie filtruje całej historii.
+        t_end = add_business_days(ev["ts"], spec.horizon_business_days)
+        window = slice_window(m1, ev["ts"], t_end)
+        if window.is_empty():
             continue
-        row = first.row(0, named=True)
+        row = window.row(0, named=True)
         ref = row["ask_open"] if side is Side.LONG else row["bid_open"]
 
         sl, tp = barriers(ref, atr_d1, side, spec)
-        t_end = add_business_days(ev["ts"], spec.horizon_business_days)
 
         res: TradeResult | None = simulate_trade(
-            side, ev["ts"], sl, tp, t_end, m1, cost, load_ticks
+            side, ev["ts"], sl, tp, t_end, window, cost, load_ticks
         )
         if res is None or res.reason in UNDEFINED_REASONS:
             continue
