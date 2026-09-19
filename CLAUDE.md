@@ -196,7 +196,57 @@ per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier)
   Źródło `ecb` (`calendar_ecb.py`): 8 posiedzeń/rok z konferencją.
   Konferencja — godzina z każdego komunikatu; decyzja — z ecb.pr220627
   (13:45 → 14:15 od 21.07.2022, spójność z konferencją sprawdzana).
-  „CET” u EBC = czas lokalny Frankfurtu, potwierdzone na tickach EURUSD 2016
+  „CET” u EBC = czas lokalny Frankfurtu, potwierdzone na tickach EURUSD 2016.
+  Źródło `boc` (`calendar_boc.py`): 80 decyzji. Daty z komunikatów
+  `fad-press-release-RRRR-MM-DD`, godzina z rocznego komunikatu
+  „…schedule…” („at 09:45 (ET)”; wcześniej 10:00). Godzina dla daty
+  z NAJPÓŹNIEJSZEGO harmonogramu, który ją wymienia — 2024 dzieli się
+  5 × 10:00 i 3 × 09:45. Każda data harmonogramu musi mieć komunikat.
+  Źródło `statcan` (`calendar_statcan.py`): CA_CPI, 120 publikacji.
+  Daty z `dai-quo/ssi/homepage/schedule-key_indicators-eng.json`, godzina
+  z nagłówka PDF każdej publikacji („Released at 8:30 a.m. Eastern time”),
+  data w nagłówku sprawdzana z JSON-em.
+  Źródło `boe` (`calendar_boe.py`): 83 posiedzenia MPC 2016–2025. Lista
+  przez `POST /_api/Search/RefreshContentPageSearchList`; slug `<miesiąc>-<rok>`
+  = planowe (13march-2020 i „special … 19 march 2020” odpadają), data
+  z „Published on …”, wymagany czwartek. Godzina 12:00 tylko z konwencji
+  → `calendar_times.yaml` (BOE_RATE, `verified: false` — zdarzeń brak).
+  Źródło `ons` (`calendar_ons.py`): UK_CPI 119 + UK_LABOUR 119. Kalendarz
+  `releasecalendar?keywords=…` ma godzinę KAŻDEJ publikacji (`data-gtm-release-*`);
+  9:30 do 2020, potem 7:00. Kalendarz zaczyna się w lutym 2016 — styczeń
+  2016 (CPI 19.01, praca 20.01) z biuletynów, godzina z `calendar_times.yaml`
+  (ONS_BULLETIN, `verified: false`), stąd 11 zamiast 12 publikacji w 2016.
+  Źródło `rba` (`calendar_rba.py`): 104 decyzje (11/rok do 2023, 8 od 2024).
+  rba.gov.au daje skryptom 403, więc strony czytane z kopii Wayback —
+  harmonogram zapisany PRZED rokiem dowodzi zarazem planowości. Dwa układy:
+  tekstowy („media release issued at 2.30 pm” + dni) i od 2024 lista
+  z godziną i strefą per posiedzenie. 2018 nie ma zapisu harmonogramu:
+  planowość z treści komunikatu („At its meeting today”). Nieplanowe
+  19.03.2020 pominięte.
+  Źródło `abs` (`calendar_abs.py`): AU_CPI, 41 publikacji (kwartalne, od
+  X 2025 miesięczne). Godzina z każdej strony wydania: nowy układ
+  („Release date and time … 11:30am AEDT”, skrót sprawdzany ze strefą),
+  ausstats do 06.2020 („Released at 11:30 AM (CANBERRA TIME)”).
+  Źródło `jp` (`calendar_jp.py`): JP_CPI, 120 publikacji. Harmonogram
+  `data/kouhyou/e-stat_cpi.xml` (UTF-16) ma datę i godzinę (8:30 JST);
+  lata 2016–2021 z kopii Wayback rocznych plików. Klucz = rok i miesiąc
+  odniesienia (zmiana ery 平成→令和 zmienia nazwę), termin z najnowszej
+  kopii (plik z 2017 zapowiadał styczeń 2018 na 2.03, wyszło 23.02).
+  Źródło `boj` (`calendar_boj.py`): 79 decyzji. BoJ podaje godzinę
+  ogłoszenia tylko do 2015 („Announced at 12:17 p.m.”), metadane PDF nie są
+  publikacją (29.01.2016: ModDate 13:59, rynek 12:38). Znacznik = koniec
+  posiedzenia z nagłówka protokołu (`minu_<rok>/g*.pdf`, od 2018 `.htm`);
+  publikacja ~7 min później (zmierzone na M1 USDJPY 2016), więc mieści się
+  w oknie −30/+120. Nadzwyczajne (16.03 i 22.05.2020) rozpoznane po
+  zwrotach „Unscheduled Monetary Policy Meeting” / „brought forward” —
+  w latach 2016–2025 żaden inny protokół ich nie ma; 2020 ma 7 planowych.
+  Źródło `eurostat` (`calendar_eurostat.py`): EA_HICP_FLASH. Kalendarz
+  Eurostatu sięga 2025, portlet listy daje 403, więc sondowane są trwałe
+  adresy `products-euro-indicators/w/2-DDMMYYYY-ap` (dni robocze 24. →
+  7. następnego miesiąca); brak komunikatu = `<title>EU Login`. Flash
+  rozpoznaje tytuł („Euro area annual inflation …”, odczyt finalny brzmi
+  inaczej). Godzina 11:00 CET z `calendar_times.yaml` (`verified: false`).
+  ec.europa.eu odpowiada 429 — pauza 2,5 s i ponawianie
 - `src/strategy/v1a.py` — reguła V1a + NO TRADE wg ADR-033:
   `decision_frame()` (warunki per bar), `run_v1a()` (sekwencyjnie: limity
   bloków walutowych, portfela, jedna pozycja na parę do `t1`), log decyzji
@@ -212,27 +262,30 @@ mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
 
-Kalendarz: USD 6/6, EUR 2/3 (brak HICP flash). Brakuje jeszcze 10 serii.
-Rozpoznanie (2026-09-19), do kontynuacji:
-- Eurostat HICP flash: API kalendarza `ec.europa.eu/eurostat/o/calendars/
-  eventsJson?start=…T00:00:00Z&end=…&theme=&category=&keywords=&
-  isEuroindicator=&authorInclude=&authorExclude=` (ciasteczko ze strony
-  `news/release-calendar`) — tytuł „Flash estimate inflation euro area”,
-  pole `start` np. `2025-01-07T11:00Z` przy `allDay: true` (czy to UTC czy
-  czas lokalny — sprawdzić na tickach, jak przy EBC). Dane są dla 2025+,
-  dla 2016 i 2019 pusto — starsze lata potrzebują innego źródła. LIMIT:
-  po ~15 szybkich zapytaniach 429 „Quota Exhausted” — pauzy ≥ 2 s
-- BoE: strona „published at 12 noon on a Thursday” (dziś); archiwalne
-  posiedzenia mają inne URL-e (`…/2016/january-2016` = 404) — szukać
-  listy/archiwum. Pozostałe (ONS, BoJ, stat.go.jp, BoC, StatCan, ABS)
-  nierozpoznane; RBA wymaga ręcznego zapisu stron (403) (raport: `scripts/fetch_calendar.py`):
-HICP flash (Eurostat); BoE, UK CPI, UK labour; BoJ, JP CPI; RBA, AU CPI; BoC, CA CPI.
-Dostępność (2026-09-19): Fed, EBC, BoE, BoC, BoJ odpowiadają 200;
-BLS i RBA dają 403 automatom; FRED/ALFRED (daty publikacji US) wymaga
-darmowego klucza API — użytkownik musi go założyć. Gdy źródło podaje
-tylko datę, godzinę trzeba prerejestrować z cytatem ze źródła (ADR-032).
+Kalendarz (2026-09-20): wszystkie 16 serii HIGH walut kohorty A mają moduł
+źródłowy. Pokrycie pełne dla USD 6/6, JPY 2/2, AUD 2/2, CAD 2/2.
+CZEKA NA UŻYTKOWNIKA — trzy wpisy w `config/calendar_times.yaml`
+(`verified: false`, więc źródło nie wypuszcza zdarzeń i `coverage_gaps()`
+jest niepuste):
+- `BOE_RATE` — 12:00 Londyn. Cytaty: dziś „The Monetary Policy summary and
+  minutes are published at 12 noon on a Thursday eight times a year”;
+  2016 (Wayback) „The MPC's decisions on interest rates are announced on
+  a Thursday at 12 noon”. Ticki GBPUSD 2016 zgodne. Wyjątek 08.05.2025
+  (12:02) pomijalny w oknie 30/120.
+- `ONS_BULLETIN` — 9:30 Londyn, tylko dla stycznia 2016 (kalendarz ONS
+  zaczyna się w lutym 2016). Brak zdania-konwencji w źródle; dowód: wszystkie
+  publikacje luty–grudzień 2016 o 9:30, ticki GBPUSD 19–20.01.2016 o 9:30.
+- `EA_HICP_FLASH` — 11:00 CET. Kalendarz Eurostatu podaje godzinę dopiero
+  od 2025; ticki EURUSD 29.02.2016 (flash) szczyt M1 o 10:00 UTC = 11:00 CET.
+Po ustawieniu `verified: true`: `fetch_calendar.py --sources boe ons eurostat`
+(cache jest zbudowany, więc bez sieci dla boe/ons).
+
 Rok 2015 nie jest potrzebny (rozgrzewka; FOMC 2015 nie podaje godziny).
 Do zrobienia przy runnerze V1a: przerwać, gdy `coverage_gaps()` niepuste.
+Kopie z Wayback (`web.archive.org/web/<znacznik>id_/<adres>`) są używane
+tam, gdzie serwis blokuje skrypty (RBA) albo usunął pliki (roczne
+harmonogramy stat.go.jp) — treść jest wierną kopią strony oficjalnej,
+a znacznik zapisu bywa dowodem, że termin był znany z wyprzedzeniem.
 
 Ustalenia z danych:
 - Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
@@ -257,8 +310,11 @@ w `trials.jsonl`). Sprawdzić w raporcie: liczbę „bez wyniku" (po ADR-026
 powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Ok. 32 ms na
 unikalną transakcję — przy 7 latach rozważyć wektoryzację `_find_exit`.
 
-Równolegle (nie czeka na dane): pozostałe źródła kalendarza (po jednym
-module `calendar_<źródło>.py` z testem na syntetycznym HTML, wzór:
-`calendar_fomc.py`); klucz FRED od użytkownika. Potem runner V1a na
-harnessie (`kind="strategy"`, `n_variants=7`) — uruchamiać dopiero po
-zamknięciu bramki 0 i przy pełnym pokryciu kalendarza. Potem bramka 1.
+Równolegle (nie czeka na dane): potwierdzić trzy godziny w
+`config/calendar_times.yaml` (BOE_RATE, ONS_BULLETIN, EA_HICP_FLASH) i
+przebiec `fetch_calendar.py --sources boe ons eurostat` — wtedy pokrycie
+kalendarza jest pełne. Klucz FRED od użytkownika (US_RETAIL_SALES ma
+osobne źródło `census`, więc `fred` służy już tylko do kontroli dat).
+Potem runner V1a na harnessie (`kind="strategy"`, `n_variants=7`) —
+uruchamiać dopiero po zamknięciu bramki 0 i przy pełnym pokryciu
+kalendarza. Potem bramka 1.

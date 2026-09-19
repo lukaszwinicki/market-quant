@@ -44,6 +44,7 @@ from src.data import calendar_boe as boe  # noqa: E402
 from src.data import calendar_boj as boj  # noqa: E402
 from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_ecb as ecb  # noqa: E402
+from src.data import calendar_eurostat as eurostat  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
 from src.data import calendar_jp as jp  # noqa: E402
@@ -60,20 +61,26 @@ RAW = ROOT / "data" / "raw" / "calendar"
 OUT = ROOT / "data" / "calendar"
 USER_AGENT = "Mozilla/5.0 (market-quant research; schedule only)"
 PAUSE_S = 1.0
+EUROSTAT_PAUSE_S = 2.5          # ec.europa.eu odpowiada 429 po kilkunastu szybkich zapytaniach
 
 log = logging.getLogger("fetch_calendar")
 
 
+TRANSIENT_STATUS = {429, 502, 503, 504}     # limit tempa albo chwilowa awaria serwisu
+
+
 def urlopen_retry(req: urllib.request.Request, timeout: int = 60) -> bytes:
-    """Treść odpowiedzi; przy odmowie połączenia (limit tempa) ponawia z odczekaniem."""
-    for wait in (15, 30, 60, 120, 0):
+    """Treść odpowiedzi; przy limicie tempa albo zerwanym połączeniu ponawia z odczekaniem."""
+    for wait in (15, 30, 60, 120, 300, 0):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         except (urllib.error.URLError, TimeoutError) as e:
-            transient = isinstance(getattr(e, "reason", None), (ConnectionRefusedError,
-                                                                TimeoutError))
-            if not wait or not (transient or isinstance(e, TimeoutError)):
+            transient = (isinstance(e, TimeoutError)
+                         or isinstance(getattr(e, "reason", None),
+                                       (ConnectionRefusedError, TimeoutError))
+                         or getattr(e, "code", None) in TRANSIENT_STATUS)
+            if not wait or not transient:
                 raise
             log.info("%s — ponawiam za %ds", e, wait)
             time.sleep(wait)
@@ -96,7 +103,7 @@ def fetch_bytes(url: str, cache: Path) -> bytes:
     return data
 
 
-def fetch(url: str, cache: Path) -> str:
+def fetch(url: str, cache: Path, pause: float = PAUSE_S) -> str:
     """Strona z cache albo z sieci (i do cache). Pusta odpowiedź = błąd."""
     name = re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1])
     path = cache / name
@@ -112,7 +119,7 @@ def fetch(url: str, cache: Path) -> str:
         raise RuntimeError(f"{url}: pusta odpowiedź")
     cache.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
-    time.sleep(PAUSE_S)
+    time.sleep(pause)
     return html
 
 
@@ -617,9 +624,54 @@ def build_boj(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
+def fetch_title(url: str, cache: Path, pause: float = PAUSE_S) -> str | None:
+    """Sam tytuł strony, zapisany w cache zamiast całej strony.
+
+    Sondowanie Eurostatu to ponad tysiąc adresów po ~170 kB; z komunikatu
+    i tak potrzebny jest wyłącznie tytuł, a plik „brak publikacji” to jedno
+    słowo. Strony z komunikatem zostają w cache w całości.
+    """
+    path = cache / (re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1]) + ".title")
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        return text or None
+    title = eurostat.page_title(fetch(url, cache, pause=pause))
+    cache.mkdir(parents=True, exist_ok=True)
+    path.write_text(title or "", encoding="utf-8")
+    if not title:                      # strona logowania — nie trzymamy jej kopii
+        (cache / re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1])).unlink(missing_ok=True)
+    return title
+
+
+def build_eurostat(years: range) -> pl.DataFrame:
+    """HICP flash: data z adresu komunikatu, godzina z calendar_times.yaml."""
+    cache = RAW / "eurostat"
+    start = dt.date(years.start, 1, 1) - dt.timedelta(days=8)   # okno sięga poprzedniego miesiąca
+    end = dt.date(years.stop - 1, 12, 31) + dt.timedelta(days=8)
+    found: dict[dt.date, str] = {}
+    for day in eurostat.candidate_days(start, end):
+        title = fetch_title(eurostat.release_url(day), cache, pause=EUROSTAT_PAUSE_S)
+        if title and eurostat.is_flash(title):
+            found[day] = title
+    try:
+        at, tz = release_time(release_times_cfg()["EA_HICP_FLASH"], "EA_HICP_FLASH")
+    except PermissionError as e:
+        log.warning("%s — pomijam %d publikacji", e, len(found))
+        return pl.DataFrame(schema=CALENDAR_SCHEMA)
+    rows = [{"timestamp_utc": dt.datetime.combine(d, at, tzinfo=tz).astimezone(UTC),
+             "currency": "EUR", "name": "EA_HICP_FLASH", "rank": "HIGH",
+             "source": eurostat.release_url(d)}
+            for d in sorted(found) if years.start <= d.year <= years.stop - 1]
+    per_year = pl.Series([r["timestamp_utc"].year for r in rows]).value_counts()
+    if short := sorted((y, n) for y, n in per_year.iter_rows() if n != 12):
+        log.warning("Eurostat EA_HICP_FLASH: lata bez 12 publikacji: %s", short)
+    log.info("Eurostat EA_HICP_FLASH: %d publikacji", len(rows))
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
            "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan,
-           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba, "jp": build_jp, "boj": build_boj}
+           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba, "jp": build_jp, "boj": build_boj, "eurostat": build_eurostat}
 
 
 def main() -> int:

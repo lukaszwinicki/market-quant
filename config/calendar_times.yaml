@@ -39,6 +39,18 @@ release_times:
     proposed_by: "cytaty ze stron BoE znalezione przez skrypt/Claude — do sprawdzenia przez użytkownika"
     verified: false
 
+  EA_HICP_FLASH:                    # `eurostat`: komunikat podaje tylko datę
+    local_time: "11:00"
+    timezone: "Europe/Brussels"
+    schedule_url: "https://ec.europa.eu/eurostat/news/release-calendar"
+    quote: null                     # kalendarz Eurostatu podaje godzinę dopiero od 2025
+    evidence: >-
+      Kalendarz Eurostatu (eventsJson) dla 2025 podaje przy zdarzeniach „11:00”.
+      Dla lat wcześniejszych żadna strona ani PDF komunikatu nie podaje godziny.
+    ticks: "EURUSD M1 2016-02-29 (flash za luty): największy ruch dnia o 10:00 UTC = 11:00 CET"
+    proposed_by: "kalendarz Eurostatu 2025 + ticki — do potwierdzenia przez użytkownika"
+    verified: false
+
   ONS_BULLETIN:                     # `ons`: tylko styczeń 2016 (przed kalendarzem ONS)
     local_time: "09:30"
     timezone: "Europe/London"
