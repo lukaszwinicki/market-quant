@@ -28,7 +28,9 @@ from zoneinfo import ZoneInfo
 
 UTC = dt.timezone.utc
 
-# nazwa serii kalendarza → (seria FRED, id publikacji FRED)
+# nazwa serii kalendarza → (seria FRED, id publikacji FRED).
+# US_PCE i US_GDP_ADVANCE: zdarzenia generuje źródło `bea` (godzina z każdej
+# publikacji); tutaj służą tylko do sprawdzenia dat krzyżowo.
 SERIES: dict[str, tuple[str, int]] = {
     "US_CPI": ("CPIAUCSL", 10),
     "US_NFP": ("PAYEMS", 50),
@@ -36,6 +38,7 @@ SERIES: dict[str, tuple[str, int]] = {
     "US_RETAIL_SALES": ("RSAFS", 9),
     "US_GDP_ADVANCE": ("GDPC1", 53),
 }
+FROM_OTHER_SOURCE = {"US_PCE", "US_GDP_ADVANCE"}
 
 
 def first_release_dates(observations: list[dict]) -> list[dt.date]:

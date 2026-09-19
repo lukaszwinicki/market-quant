@@ -33,6 +33,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
 from src.data.calendar import (  # noqa: E402
@@ -119,6 +120,8 @@ def build_fred(years: range) -> pl.DataFrame:
     start, end = dt.date(years.start, 1, 1), dt.date(years.stop - 1, 12, 31)
     rows = []
     for name, (series_id, release_id) in fred.SERIES.items():
+        if name in fred.FROM_OTHER_SOURCE:
+            continue
         rel = fred_get("series/release", cache, series_id=series_id)["releases"][0]
         if rel["id"] != release_id:
             raise RuntimeError(f"{series_id}: publikacja {rel['id']}, oczekiwana {release_id}")
@@ -137,7 +140,52 @@ def build_fred(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
-SOURCES = {"fomc": build_fomc, "fred": build_fred}
+def alfred_first_releases(name: str, years: range) -> list[dt.date]:
+    series_id, _ = fred.SERIES[name]
+    obs = fred_get("series/observations", RAW / "fred", series_id=series_id,
+                   realtime_start=f"{years.start - 1}-01-01", realtime_end="9999-12-31",
+                   output_type=4, observation_start=f"{years.start - 1}-01-01")["observations"]
+    return fred.first_release_dates(obs)
+
+
+def build_bea(years: range) -> pl.DataFrame:
+    """PCE i GDP advance z bea.gov — godzina z embarga każdego komunikatu."""
+    cache = RAW / "bea"
+    start, end = dt.date(years.start, 1, 1), dt.date(years.stop - 1, 12, 31)
+    rows = []
+    for name in bea.PRODUCTS:
+        found: dict[str, str] = {}
+        for page in range(200):
+            listing = bea.archive_rows(fetch(bea.archive_url(name, page), cache))
+            if not listing:
+                break
+            for url, year, title in listing:
+                if years.start <= year <= years.stop - 1 and bea.wanted(name, title):
+                    found[url] = title
+            if min(y for _, y, _ in listing) < years.start:
+                break
+        events = []
+        for url in sorted(found):
+            t = bea.embargo_time_utc(fetch(url, cache), url)
+            if start <= t.date() <= end:
+                events.append({"timestamp_utc": t, "currency": "USD", "name": name,
+                               "rank": "HIGH", "source": url})
+
+        # Krzyżowo z ALFRED: te same dni co pierwsze publikacje okresów.
+        bea_days = {e["timestamp_utc"].date() for e in events}
+        alfred = {d for d in alfred_first_releases(name, years) if start <= d <= end}
+        if bea_days != alfred:
+            raise RuntimeError(
+                f"{name}: BEA vs ALFRED — tylko BEA: {sorted(bea_days - alfred)}, "
+                f"tylko ALFRED: {sorted(alfred - bea_days)}")
+        hours = pl.Series([e["timestamp_utc"] for e in events]).dt.strftime("%H:%M")
+        log.info("BEA %s: %d publikacji, godziny UTC %s", name, len(events),
+                 dict(sorted(hours.value_counts().iter_rows())))
+        rows += events
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
+SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea}
 
 
 def main() -> int:

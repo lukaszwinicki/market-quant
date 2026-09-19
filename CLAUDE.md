@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (257 testów):
+Gotowe (275 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -181,7 +181,11 @@ per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier)
   z ALFRED (`output_type=4`) — 12/rok, GDP 4/rok (advance); serie
   CPIAUCSL, PAYEMS, PCEPI, RSAFS, GDPC1 sprawdzane vs id publikacji.
   Godziny z `config/calendar_times.yaml` — bez `verified: true` seria
-  nie daje zdarzeń. Klucz: `FRED_API_KEY` w `.env` (gitignore)
+  nie daje zdarzeń. Klucz: `FRED_API_KEY` w `.env` (gitignore).
+  Źródło `bea` (`calendar_bea.py`): PCE i GDP advance z archiwum bea.gov,
+  godzina z nagłówka embarga KAŻDEJ publikacji, daty zgodne z ALFRED co do
+  dnia (inaczej błąd). 117 PCE + 40 GDP. PCE: 10 publikacji o 10:00/9:30
+  ET zamiast 8:30 — stała godzina byłaby błędna
 - `src/strategy/v1a.py` — reguła V1a + NO TRADE wg ADR-033:
   `decision_frame()` (warunki per bar), `run_v1a()` (sekwencyjnie: limity
   bloków walutowych, portfela, jedna pozycja na parę do `t1`), log decyzji
@@ -197,11 +201,11 @@ mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
 
-Kalendarz — CZEKA NA UŻYTKOWNIKA: potwierdzenie godzin 5 serii USA
-w `config/calendar_times.yaml` (CPI, NFP, retail — godzina pusta, BLS
-i Census do sprawdzenia w przeglądarce; PCE, GDP — 8:30 z bieżącego
-harmonogramu BEA, do potwierdzenia na publikacji z 2016).
-Brakuje jeszcze 17 serii (raport: `scripts/fetch_calendar.py`):
+Kalendarz — CZEKA NA UŻYTKOWNIKA: godziny US_CPI i US_NFP (bls.gov
+blokuje skrypty). Po odkryciu wyjątków w BEA jedna próbka nie wystarczy —
+potrzebne godziny per publikacja: roczne kalendarze BLS zapisane ręcznie
+do `data/raw/calendar/bls/`. US_RETAIL_SALES: do zbadania archiwum Census.
+Brakuje jeszcze 15 serii (raport: `scripts/fetch_calendar.py`):
 US CPI, NFP, PCE, retail sales, GDP advance; EBC decyzja + konferencja,
 HICP flash; BoE, UK CPI, UK labour; BoJ, JP CPI; RBA, AU CPI; BoC, CA CPI.
 Dostępność (2026-09-19): Fed, EBC, BoE, BoC, BoJ odpowiadają 200;

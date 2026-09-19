@@ -15,6 +15,11 @@
 # jednej wartości.
 #
 # `proposed_by` mówi, skąd wzięła się propozycja. LLM nie jest źródłem.
+#
+# US_PCE i US_GDP_ADVANCE nie są tu potrzebne: źródło `bea` czyta godzinę
+# z nagłówka embarga KAŻDEJ publikacji. Pokazało to, że stała godzina jest
+# błędna — PCE 2016–2025: 107 publikacji o 8:30 ET, 10 o 10:00 lub 9:30.
+# Dla serii poniżej trzeba sprawdzić, czy wyjątki też występują.
 # =============================================================================
 
 fred_release_times:
@@ -34,26 +39,10 @@ fred_release_times:
     proposed_by: "do potwierdzenia — bls.gov blokuje skrypty (403)"
     verified: false
 
-  US_PCE:
-    local_time: "08:30"
-    timezone: "America/New_York"
-    schedule_url: "https://www.bea.gov/news/schedule"
-    quote: "Personal Income and Outlays, August 2026 October 6 8:30 AM"
-    proposed_by: "bea.gov/news/schedule, pobrane 2026-09-19 (harmonogram bieżący)"
-    verified: false
-
   US_RETAIL_SALES:
     local_time: null                # do uzupełnienia z source
     timezone: "America/New_York"
     schedule_url: "https://www.census.gov/economic-indicators/"
     quote: null
     proposed_by: "do potwierdzenia — godzina nie znaleziona w treści strony"
-    verified: false
-
-  US_GDP_ADVANCE:
-    local_time: "08:30"
-    timezone: "America/New_York"
-    schedule_url: "https://www.bea.gov/news/schedule"
-    quote: "GDP (Advance Estimate), 3rd Quarter 2026 October 29 8:30 AM"
-    proposed_by: "bea.gov/news/schedule, pobrane 2026-09-19 (harmonogram bieżący)"
     verified: false
