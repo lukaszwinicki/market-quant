@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (278 testów):
+Gotowe (284 testy):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -189,7 +189,10 @@ per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier)
   Źródło `bls` (`calendar_bls.py`): CPI i NFP z rocznych kalendarzy
   `bls.gov/schedule/<rok>_sched.htm`, zapisanych RĘCZNIE przez użytkownika
   do `data/raw/calendar/bls/` (bls.gov: 403 dla skryptów). 119 + 119,
-  wszystkie 8:30 ET, daty zgodne z ALFRED
+  wszystkie 8:30 ET, daty zgodne z ALFRED.
+  Źródło `census` (`calendar_census.py`): sprzedaż detaliczna — 2016–2019
+  z archiwalnych PDF (`pypdf`, dwa układy nagłówka), 2020+ z rocznych
+  kalendarzy wskaźników. 119, wszystkie 8:30 ET, daty zgodne z ALFRED
 - `src/strategy/v1a.py` — reguła V1a + NO TRADE wg ADR-033:
   `decision_frame()` (warunki per bar), `run_v1a()` (sekwencyjnie: limity
   bloków walutowych, portfela, jedna pozycja na parę do `t1`), log decyzji
@@ -205,10 +208,8 @@ mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
 
-Kalendarz: USD ma 5 z 6 serii (brak US_RETAIL_SALES — do zbadania
-archiwum Census, census.gov wpuszcza skrypty; godzina per publikacja).
-Brakuje jeszcze 13 serii (raport: `scripts/fetch_calendar.py`):
-US CPI, NFP, PCE, retail sales, GDP advance; EBC decyzja + konferencja,
+Kalendarz: USD kompletne (6/6). Brakuje jeszcze 12 serii (raport: `scripts/fetch_calendar.py`):
+EBC decyzja + konferencja,
 HICP flash; BoE, UK CPI, UK labour; BoJ, JP CPI; RBA, AU CPI; BoC, CA CPI.
 Dostępność (2026-09-19): Fed, EBC, BoE, BoC, BoJ odpowiadają 200;
 BLS i RBA dają 403 automatom; FRED/ALFRED (daty publikacji US) wymaga

@@ -17,6 +17,7 @@ numpy==2.5.3            # dekodowanie .bi5, operacje wektorowe
 # --- Sieć i konfiguracja ---
 requests==2.34.2        # pobieranie z Dukascopy
 PyYAML==6.0.3           # config/v1_baseline.yaml
+pypdf==6.19.0           # nagłówki archiwalnych komunikatów Census (kalendarz)
 
 # --- Testy ---
 pytest==9.1.1

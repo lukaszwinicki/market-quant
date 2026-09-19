@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_bls as bls  # noqa: E402
+from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
 from src.data.calendar import (  # noqa: E402
@@ -49,6 +50,22 @@ USER_AGENT = "Mozilla/5.0 (market-quant research; schedule only)"
 PAUSE_S = 1.0
 
 log = logging.getLogger("fetch_calendar")
+
+
+def fetch_bytes(url: str, cache: Path) -> bytes:
+    """Plik binarny (PDF) z cache albo z sieci (i do cache)."""
+    path = cache / re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1])
+    if path.exists():
+        return path.read_bytes()
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = r.read()
+    if not data:
+        raise RuntimeError(f"{url}: pusta odpowiedź")
+    cache.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    time.sleep(PAUSE_S)
+    return data
 
 
 def fetch(url: str, cache: Path) -> str:
@@ -222,7 +239,44 @@ def build_bls(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
-SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls}
+def build_census(years: range) -> pl.DataFrame:
+    """Sprzedaż detaliczna: PDF-y archiwalne do 2019, kalendarze roczne od 2020."""
+    import io
+
+    from pypdf import PdfReader
+
+    # pypdf ostrzega o czcionkach CFF bez fontTools — dotyczy glifów spoza
+    # nagłówka; nagłówek i tak jest weryfikowany regexem i datą z ALFRED.
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
+    cache = RAW / "census"
+    times = []
+    old = [y for y in years if y < census.FIRST_LISTVIEW_YEAR]
+    if old:
+        # Miesiąc danych poprzedza publikację o ~2 tygodnie: dane z XII roku
+        # poprzedniego wychodzą w styczniu pierwszego roku zakresu.
+        first = f"{(old[0] - 1) % 100:02d}12"
+        last = f"{old[-1] % 100:02d}12"
+        for url in census.historic_pdf_urls(fetch(census.HISTORIC_PAGE, cache), first, last):
+            pdf = PdfReader(io.BytesIO(fetch_bytes(url, cache)))
+            t = census.pdf_release_time_utc(pdf.pages[0].extract_text(), url)
+            if t.year in old:
+                times.append((t, url))
+    for y in (y for y in years if y >= census.FIRST_LISTVIEW_YEAR):
+        url = census.listview_url(y)
+        times += [(t, url) for t in census.listview_times_utc(fetch(url, cache)) if t.year == y]
+
+    events = [{"timestamp_utc": t, "currency": "USD", "name": "US_RETAIL_SALES",
+               "rank": "HIGH", "source": url} for t, url in sorted(times)]
+    check_against_alfred("US_RETAIL_SALES", events, years)
+    hours = pl.Series([e["timestamp_utc"].astimezone(census.NY).strftime("%H:%M")
+                       for e in events])
+    log.info("Census US_RETAIL_SALES: %d publikacji, godziny ET %s", len(events),
+             dict(sorted(hours.value_counts().iter_rows())))
+    return pl.DataFrame(events, schema=CALENDAR_SCHEMA)
+
+
+SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
+           "census": build_census}
 
 
 def main() -> int:
