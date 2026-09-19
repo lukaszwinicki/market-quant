@@ -48,6 +48,16 @@ CLOSED_CELL_MAX = 0.20       # poniżej: rynek zamknięty, brak danych normalny
 # Luka wewnątrz bara H1 uznawana za istotną.
 MAX_GAP_SECONDS = 60
 
+# Jedyne ZAKŁADANE zamknięcia rynku: 25.12 i 1.01 — rynek FX stoi w oba dni
+# globalnie, a kalendarz tygodniowy tego nie wyprowadzi (to nie są stałe
+# komórki dzień/godzina). Bez tego każdy rok dawał ~36 fałszywych "awarii".
+# Lista celowo minimalna: Wielki Piątek i inne święta FX bywają otwarte,
+# więc brak danych w nich MA się pokazać jako podejrzany.
+MARKET_HOLIDAYS = {(12, 25), (1, 1)}
+# Ciągły blok pustych godzin dłuższy niż to nie jest świętem, nawet jeśli
+# dotyka 25.12 albo 1.01 — prawdziwa awaria przy święcie nie może się schować.
+MAX_HOLIDAY_RUN_HOURS = 36
+
 
 @dataclass
 class QualityReport:
@@ -57,6 +67,7 @@ class QualityReport:
     spread_stats: pl.DataFrame             # rozkład spreadu per symbol
     ambiguous_cells: pl.DataFrame | None = None   # granice DST i sesji
     invariant_errors: list[str] = field(default_factory=list)
+    holiday_closures: pl.DataFrame | None = None  # 25.12 / 1.01 — nie awarie
 
     def passes_gate_0(self, max_gap_pct: float = 5.0) -> tuple[bool, list[str]]:
         """Kryterium z PROJECT_SPEC §15: luki > 5% barów na >= 2 parach = STOP."""
@@ -159,6 +170,32 @@ def missing_trading_hours(
     return expected.join(have, on="ts", how="anti").select("ts").sort("ts")
 
 
+def split_holiday_closures(
+    hours: list[dt.datetime],
+) -> tuple[list[dt.datetime], list[dt.datetime]]:
+    """Rozdziel godziny puste u wszystkich par na (awarie, święta).
+
+    Świętem jest ciągły blok (krok 1h) dotykający daty z MARKET_HOLIDAYS
+    i nie dłuższy niż MAX_HOLIDAY_RUN_HOURS. Blok obejmuje też wieczór
+    31.12, bo rynek zamyka się o 17:00 czasu nowojorskiego.
+    """
+    runs: list[list[dt.datetime]] = []
+    for h in sorted(hours):
+        if runs and h - runs[-1][-1] == dt.timedelta(hours=1):
+            runs[-1].append(h)
+        else:
+            runs.append([h])
+
+    outages, holidays = [], []
+    for run in runs:
+        touches = any((h.month, h.day) in MARKET_HOLIDAYS for h in run)
+        if touches and len(run) <= MAX_HOLIDAY_RUN_HOURS:
+            holidays += run
+        else:
+            outages += run
+    return outages, holidays
+
+
 def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
     """Zbuduj raport z barów H1 wszystkich symboli."""
     from .resample import validate_bars
@@ -192,17 +229,6 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
         missing = missing_trading_hours(bars, global_cells, span=span)
         missing_by_symbol[symbol] = set(missing["ts"].to_list())
 
-        expected = bars.height + missing.height
-        coverage_rows.append({
-            "symbol": symbol,
-            "bars": bars.height,
-            "expected": expected,
-            "missing": missing.height,
-            "gap_pct": 100.0 * missing.height / expected if expected else 0.0,
-            "first": bars["ts"].min(),
-            "last": bars["ts"].max(),
-        })
-
         if not bars.is_empty():
             sc = bars["spread_close"]
             sm = bars["spread_max"]
@@ -218,9 +244,25 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
 
     # Awaria feedu: godzina brakująca u WSZYSTKICH symboli naraz.
     outages: list[dt.datetime] = []
+    holidays: list[dt.datetime] = []
     if len(missing_by_symbol) > 1:
         common = set.intersection(*missing_by_symbol.values())
-        outages = sorted(common)
+        outages, holidays = split_holiday_closures(list(common))
+
+    # Święta nie są lukami — rynek był zamknięty, nie było czego pobrać.
+    holiday_set = set(holidays)
+    for symbol, bars in sorted(bars_by_symbol.items()):
+        missing_n = len(missing_by_symbol[symbol] - holiday_set)
+        expected = bars.height + missing_n
+        coverage_rows.append({
+            "symbol": symbol,
+            "bars": bars.height,
+            "expected": expected,
+            "missing": missing_n,
+            "gap_pct": 100.0 * missing_n / expected if expected else 0.0,
+            "first": bars["ts"].min(),
+            "last": bars["ts"].max(),
+        })
 
     return QualityReport(
         symbol_coverage=pl.DataFrame(coverage_rows),
@@ -229,7 +271,7 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
             [
                 {"symbol": s, "ts": t}
                 for s, ts in missing_by_symbol.items()
-                for t in sorted(ts) if t not in set(outages)
+                for t in sorted(ts) if t not in set(outages) | holiday_set
             ],
             schema={"symbol": pl.Utf8, "ts": pl.Datetime("ms", "UTC")},
         ),
@@ -240,6 +282,8 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
                     "hour": pl.Int8, "coverage": pl.Float64},
         ),
         invariant_errors=invariant_errors,
+        holiday_closures=pl.DataFrame(
+            {"ts": holidays}, schema={"ts": pl.Datetime("ms", "UTC")}),
     )
 
 
@@ -295,6 +339,16 @@ def render_markdown(report: QualityReport) -> str:
             lines.append(f"| {ts:%Y-%m-%d %H:%M} |")
         if report.suspected_outages.height > 50:
             lines.append(f"| ... jeszcze {report.suspected_outages.height - 50} |")
+
+    if report.holiday_closures is not None and not report.holiday_closures.is_empty():
+        hol = report.holiday_closures.with_columns(pl.col("ts").dt.date().alias("d"))
+        days = hol.group_by("d").agg(pl.len().alias("n")).sort("d")
+        lines += ["", "## Zamknięcia świąteczne", "",
+                  "Godziny puste u wszystkich par w blokach dotykających 25.12 albo 1.01 "
+                  f"(≤ {MAX_HOLIDAY_RUN_HOURS} h). Nie liczone jako luki ani awarie.",
+                  "", "| Data | Godzin |", "|---|---|"]
+        for r in days.iter_rows(named=True):
+            lines.append(f"| {r['d']:%Y-%m-%d} | {r['n']} |")
 
     if report.ambiguous_cells is not None and not report.ambiguous_cells.is_empty():
         lines += ["", "## Komórki niejednoznaczne", "",

@@ -108,6 +108,32 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 
 ## Stan
 
-Bramka 0 w toku. Pobieranie ticków Dukascopy leci w tle (~5 dni, wznawialne).
-Gotowe: downloader, resampling `tick → M1 → H1`, raport jakości danych.
-Następne: CLI budujące Parquet, `requirements.txt`, symulator egzekucji.
+Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
+w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
+do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
+
+Gotowe (84 testy):
+- `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
+  (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
+- `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
+  raport `reports/data_quality.md` (2015–16: bramka 0 przechodzi)
+- `src/execution/simulator.py` — fill bid/ask, luki, pesymistyczna
+  kolejność barier, podłoga kosztu (ADR-024)
+- `src/features/technical.py` — 6 cech, test kauzalności
+- `src/labels/triple_barrier.py` — etykiety z `t1`, `overlap_fraction`,
+  `effective_sample_size`
+
+Ustalenia z danych:
+- Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
+  ~rok po starcie danych (2016-01). Rok 2015 to tylko historia dla cech.
+- Nakładanie etykiet ~99% przy horyzoncie 10 dni: efektywne n jest
+  o rząd wielkości mniejsze od nominalnego. Do testów istotności
+  używać `effective_sample_size`, nie liczby wierszy.
+- Spready 2015 (mediana `spread_close`): EURUSD 0,3, USDJPY 0,4,
+  pozostałe 0,8–1,2 pipsa. Podłoga 1,5 / 2,5 pipsa zwykle wiąże.
+- `data/raw/dukascopy/EURUSD/2019,2020` — 130 godzin próbek z testów
+  dekodera; poprawne, downloader je pominie.
+
+Następne: CPCV z purge/embargo na `t1`, DSR, PBO, kontrole losowe →
+harness z automatycznym `trials.jsonl` → powtórka testu negatywnego
+bramki 0 na danych wieloletnich.

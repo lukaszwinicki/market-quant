@@ -96,6 +96,48 @@ def test_single_symbol_gap_is_not_an_outage():
     assert rep.per_symbol_gaps.filter(pl.col("symbol") == "EURUSD").height == 1
 
 
+def _without(hrs, drop):
+    drop = set(drop)
+    return [h for h in hrs if h not in drop]
+
+
+def test_christmas_closure_is_not_an_outage():
+    """25.12 pusty u wszystkich par to zamknięcie rynku, nie awaria."""
+    hrs = weekday_hours(dt.date(2015, 11, 30), 6)          # obejmuje piątek 25.12
+    xmas = [dt.datetime(2015, 12, 25, h, tzinfo=UTC) for h in range(8, 21)]
+    kept = _without(hrs, xmas)
+
+    rep = build_report({s: bars(kept) for s in ("EURUSD", "GBPUSD", "USDJPY")})
+
+    assert rep.suspected_outages.is_empty()
+    assert rep.holiday_closures["ts"].to_list() == xmas
+    assert rep.symbol_coverage["missing"].to_list() == [0, 0, 0]
+    assert rep.passes_gate_0()[0]
+    assert "Zamknięcia świąteczne" in render_markdown(rep)
+
+
+def test_long_gap_touching_holiday_is_still_an_outage():
+    """Awaria nie może się schować za świętem: blok > limitu zostaje awarią."""
+    hrs = weekday_hours(dt.date(2015, 11, 30), 6)
+    gap = [dt.datetime(2015, 12, 23, 0, tzinfo=UTC) + dt.timedelta(hours=i)
+           for i in range(72)]                              # 23.12 – 25.12
+    kept = _without(hrs, gap)
+
+    rep = build_report({s: bars(kept) for s in ("EURUSD", "GBPUSD", "USDJPY")})
+
+    assert rep.holiday_closures.is_empty()
+    assert rep.suspected_outages.height == 72
+    assert not rep.passes_gate_0()[0]
+
+
+def test_non_holiday_outage_unaffected_by_holiday_rule():
+    hrs = weekday_hours(dt.date(2015, 11, 30), 6)
+    outage = dt.datetime(2015, 12, 16, 10, tzinfo=UTC)
+    rep = build_report({s: bars(_without(hrs, [outage]))
+                        for s in ("EURUSD", "GBPUSD", "USDJPY")})
+    assert rep.suspected_outages["ts"].to_list() == [outage]
+
+
 # --- Kryterium Bramki 0 -----------------------------------------------------
 
 def test_gate_0_fails_when_two_symbols_exceed_gap_budget():
