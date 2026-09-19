@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (164 testy):
+Gotowe (176 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -141,9 +141,23 @@ Gotowe (164 testy):
 - `src/harness/market.py` — `load_m1(symbol, start, end, cfg)` czyta tylko
   potrzebne lata; zakres dotykający hold-outu → `SealedHoldoutError`
   (wyjście: `unseal=True`, bramka 4). `cost_model_for()` z configu
-  (EURJPY = cross, podłoga 2,5)
+  (EURJPY = cross, podłoga 2,5). `load_h1()` — ta sama pieczęć
 - `slice_window()` w `resample.py` (search_sorted); `label_events` podaje
   symulatorowi tylko okno [decyzja, bariera czasowa]
+- `src/validation/gate0.py` + `scripts/gate0.py` — bramka 0 na harnessie:
+  losowe wejścia zrównoważone long/short per para, memo transakcji
+  (deterministyczne w (symbol, ts, kierunek)), kryteria: CI brutto
+  (R + koszt) ∋ 0, podłoga per transakcja, spread z ticków, raport luk H1.
+  Wynik w `runs/<id>/gate0.md` + `labels.parquet`
+
+Bramka 0 — pierwszy przebieg (`20260919T134506Z-c4710e`, pierwszy wpis
+w `trials.jsonl`, drzewo brudne → `diff.patch`): 2015-01 → 2016-04-28,
+6 par, 20 × 100 wejść na (para, kierunek), 23 719 transakcji, 11 min.
+PRZECHODZI: netto −0,0010 R [−0,037; +0,034], brutto +0,0096 R
+[−0,027; +0,045], koszt 0,0106 R, 0 naruszeń podłogi.
+Moc: połowa CI = 3,4× koszt — na prawdziwych danych test NIE odróżnia
+kosztu policzonego od pominiętego; to robi test martyngałowy + podłoga
+per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier).
 
 Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
 - Próg `deflated_sharpe_min: 0.0` jest pusty — DSR to prawdopodobieństwo
@@ -152,6 +166,12 @@ Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
 - Spec §10.1: 6/2 daje 15 **podziałów**, ale 5 **ścieżek**, nie 15.
 - PBO wymaga ≥ 2 wariantów — siatka wrażliwości wokół {55, 2.0, 4.0}
   musi zostać prerejestrowana przed pierwszym uruchomieniem.
+- Operacjonalizacja „E[R] ≈ −koszt" z zamrożonego `gates.gate_0`:
+  przyjęto „CI95 brutto zawiera 0" — wymaga ADR.
+- Wejścia w niedzielę 21–23 UTC (~1,2%) znikają: bariera czasowa +10 dni
+  rob. wypada po piątkowym zamknięciu (20:59/21:59) → NO_DATA. Strategia
+  straci wszystkie wejścia z otwarcia tygodnia. Propozycja: wyjście po
+  ostatniej dostępnej cenie przed barierą. Zmiana symulatora → ADR.
 
 Ustalenia z danych:
 - Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
@@ -173,6 +193,6 @@ Ustalenia z danych:
 - Do decyzji (ADR): czy przebiegi kontroli/infrastruktury liczą się
   do N w DSR. Rejestr zapisuje `purpose`, `n_trials()` liczy wszystko.
 
-Następne: skrypt bramki 0 na harnessie — powtórka testu negatywnego
-na danych wieloletnich (kontrola losowa + bootstrap, E[R] vs −`cost_r`),
-wejścia pogrupowane per symbol z `cost_model_for()`.
+Następne: ADR-y dla dwóch punktów bramki 0 powyżej (≈ i NO_DATA
+w weekend); po pobraniu 2015–2021 powtórka `scripts/gate0.py` (kolejna
+próba). Potem bramka 1: rozkład zerowy dla sygnału V1a.
