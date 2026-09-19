@@ -9,9 +9,22 @@ ponownie — wynik da się odtworzyć bez sieci. Wynik: `data/calendar/<źródł
 zwalidowany (`validate_calendar`). Na końcu raport pokrycia serii HIGH
 dla walut kohorty A.
 
-Zaimplementowane źródła: fomc, fred (dane USA; wymaga FRED_API_KEY w
-środowisku albo w `.env`, oraz potwierdzonych godzin w
-`config/calendar_times.yaml`). Pozostałe serie — patrz „Stan” w CLAUDE.md.
+Źródła (`--sources`), po jednym module `src/data/calendar_<źródło>.py`:
+
+    USD  fomc, bls (CPI, NFP), bea (PCE, GDP advance), census (retail),
+         fred — tu już tylko kontrola dat przez ALFRED (wymaga FRED_API_KEY
+         w środowisku albo w `.env`)
+    EUR  ecb (decyzja + konferencja), eurostat (HICP flash)
+    GBP  boe (MPC), ons (CPI, rynek pracy)
+    JPY  boj (decyzje), jp (CPI)
+    AUD  rba (decyzje), abs (CPI)
+    CAD  boc (decyzje), statcan (CPI)
+
+Gdy źródło podaje tylko datę, godzina pochodzi z `config/calendar_times.yaml`
+i bez `verified: true` (potwierdzenia przez użytkownika) seria nie daje
+zdarzeń — raport pokrycia na końcu pokaże ją jako brakującą (ADR-032).
+Część stron blokuje skrypty albo usunęła archiwum; czytamy wtedy kopie
+z Wayback (`rba`, roczne harmonogramy w `jp`) — patrz nagłówki modułów.
 """
 
 from __future__ import annotations
