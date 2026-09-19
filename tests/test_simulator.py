@@ -321,3 +321,63 @@ def test_entry_is_at_ask_for_long_and_bid_for_short():
     sh = simulate_trade(Side.SHORT, T0, sl=1.1100, tp=1.0900, **kw)
     assert lo.entry.price == pytest.approx(1.1000 + 4 * PIP)   # ask
     assert sh.entry.price == pytest.approx(1.1000)             # bid
+
+
+# --- WYSZUKIWANIE PIERWSZEJ BARIERY (wektorowe) -----------------------------
+#
+# `_first_event` zastąpiło pętlę po barach; jedyne, co ma robić, to wskazać
+# TEN SAM bar, który wskazałby naiwny skan. Sprawdzane na losowych ścieżkach,
+# bo tu nie chodzi o znaną z góry odpowiedź, tylko o równoważność dwóch
+# implementacji tego samego warunku.
+
+
+def _naive_first_event(side, window, sl, tp):
+    long = side is Side.LONG
+    lo_col, hi_col, op_col = ("bid_low", "bid_high", "bid_open") if long else \
+                             ("ask_low", "ask_high", "ask_open")
+    for i, bar in enumerate(window.iter_rows(named=True)):
+        op, lo, hi = bar[op_col], bar[lo_col], bar[hi_col]
+        if long and (op <= sl or op >= tp or lo <= sl or hi >= tp):
+            return i
+        if not long and (op >= sl or op <= tp or hi >= sl or lo <= tp):
+            return i
+    return None
+
+
+def _random_walk(rng, n: int) -> list[dict]:
+    """Bary M1 z lukami: otwarcie potrafi wypaść poza zakres poprzedniego bara."""
+    rows, price = [], 1.1000
+    for i in range(n):
+        price += rng.normal(0, 3 * PIP)
+        hi = price + abs(rng.normal(0, 2 * PIP))
+        lo = price - abs(rng.normal(0, 2 * PIP))
+        rows.append({"min": i, "bid_o": price, "bid_h": hi, "bid_l": lo,
+                     "bid_c": price + rng.normal(0, PIP), "spread": 2 * PIP})
+    return rows
+
+
+@pytest.mark.parametrize("side", [Side.LONG, Side.SHORT])
+def test_vectorised_first_event_matches_a_naive_scan(side):
+    import numpy as np
+
+    from src.execution.simulator import _first_event
+
+    rng = np.random.default_rng(20260920)
+    checked = set()
+    for _ in range(200):
+        window = m1(_random_walk(rng, 40))
+        entry = 1.1000
+        dist = rng.uniform(2, 30) * PIP
+        sl, tp = (entry - dist, entry + dist) if side is Side.LONG else \
+                 (entry + dist, entry - dist)
+        got, want = _first_event(side, window, sl, tp), _naive_first_event(side, window, sl, tp)
+        assert got == want
+        checked.add(want is None)
+    assert checked == {True, False}, "losowanie ma dawać i trafienia, i brak trafień"
+
+
+def test_unsorted_bars_are_rejected_instead_of_silently_mis_sliced():
+    bars = m1([{"min": 0, **FLAT}, {"min": 2, **FLAT}, {"min": 1, **FLAT}])
+    with pytest.raises(ValueError, match="posortowane"):
+        simulate_trade(Side.LONG, T0, sl=1.0900, tp=1.1100,
+                       time_barrier=T0 + dt.timedelta(minutes=5), m1=bars, cost=NO_FLOOR)

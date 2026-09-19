@@ -298,17 +298,23 @@ Ustalenia z danych:
 - `data/raw/dukascopy/EURUSD/2019,2020` — 130 godzin próbek z testów
   dekodera; poprawne, downloader je pominie.
 
-- Wydajność: po wycięciu okien ~30 ms/transakcję (EURUSD 2016). Teraz
-  wąskim gardłem jest pętla Pythona po ~14k barach M1 w `_find_exit`.
-  1000 transakcji × 200 powtórzeń ≈ 100 min — jeśli za wolno,
-  wektoryzować wyszukiwanie pierwszego dotknięcia bariery (numpy).
+- Wydajność (2026-09-20): ~1,5 ms na transakcję w najgorszym przypadku
+  (pełne okno 10 dni = 14 tys. barów M1, żadna bariera nietrafiona);
+  wcześniej ~32 ms. Dwie zmiany: `_first_event()` szuka pierwszego bara
+  z barierą wektorowo (numpy, 0,03 ms zamiast 29 ms), a `simulate_trade`
+  wycina okno przez `slice_window()` (wyszukiwanie binarne) zamiast
+  `filter` (6,4 ms). Stąd wymóg: `m1` posortowane po `ts` — sprawdzane,
+  bo cichy zły wycinek byłby gorszy niż błąd. Logika i kolejność barier
+  bez zmian; test porównuje `_first_event` z naiwnym skanem na losowych
+  ścieżkach (200 przypadków na stronę).
 
 Następne (gdy pobieranie dojdzie do końca 2021): `download_ticks.py
 --retry-failed`, `build_bars.py`, potem `scripts/gate0.py` — przebieg
 zamykający bramkę 0 (nowy symulator, kryteria ADR-025; kolejna próba
 w `trials.jsonl`). Sprawdzić w raporcie: liczbę „bez wyniku" (po ADR-026
-powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Ok. 32 ms na
-unikalną transakcję — przy 7 latach rozważyć wektoryzację `_find_exit`.
+powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Symulator jest
+już zwektoryzowany (~1,5 ms na transakcję), więc 7 lat nie wymaga dalszej
+optymalizacji przed bramką 0.
 
 Równolegle (nie czeka na dane): potwierdzić trzy godziny w
 `config/calendar_times.yaml` (BOE_RATE, ONS_BULLETIN, EA_HICP_FLASH) i

@@ -56,9 +56,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
+import numpy as np
 import polars as pl
 
 from ..data.quality import MARKET_HOLIDAYS
+from ..data.resample import slice_window
 
 UTC = dt.timezone.utc
 
@@ -132,9 +134,13 @@ def simulate_trade(
     Zwraca None, gdy w momencie decyzji nie ma danych — to poprawny wynik
     (NO TRADE), nie błąd.
     """
-    window = m1.filter(
-        (pl.col("ts") >= decision_time) & (pl.col("ts") <= time_barrier)
-    ).sort("ts")
+    # Wycinek przez wyszukiwanie binarne: `filter` przechodziłby całe okno
+    # (~14 tys. barów M1) przy KAŻDEJ transakcji — po wektoryzacji barier
+    # to był dominujący koszt. Wyszukiwanie binarne na nieposortowanych barach
+    # dałoby cichy błędny wycinek, więc sprawdzamy (0,005 ms na 14 tys. barów).
+    if not m1.get_column("ts").is_sorted():
+        raise ValueError("bary M1 muszą być posortowane po ts")
+    window = slice_window(m1, decision_time, time_barrier)
     if window.is_empty():
         return None
 
@@ -169,6 +175,28 @@ def _entry_fill(side: Side, bar: dict, cost: CostModel) -> Fill:
     return Fill(time=bar["ts"], price=price, spread=spread)
 
 
+def _first_event(side: Side, window: pl.DataFrame, sl: float, tp: float) -> int | None:
+    """Indeks pierwszego bara dotykającego którejkolwiek bariery albo None.
+
+    Szukanie wektorowe: pętla Pythona po ~14 tys. barów M1 była wąskim
+    gardłem (ok. 30 ms na transakcję). Warunki są te same co przy
+    rozstrzyganiu bara — patrz `_find_exit`; tu tylko ustalamy, KTÓRY bar
+    jest pierwszy, bo dopiero on wymaga cen i ewentualnie ticków.
+    """
+    long = side is Side.LONG
+    lo_col, hi_col, op_col = ("bid_low", "bid_high", "bid_open") if long else \
+                             ("ask_low", "ask_high", "ask_open")
+    op = window.get_column(op_col).to_numpy()
+    lo = window.get_column(lo_col).to_numpy()
+    hi = window.get_column(hi_col).to_numpy()
+    if long:
+        event = (op <= sl) | (op >= tp) | (lo <= sl) | (hi >= tp)
+    else:
+        event = (op >= sl) | (op <= tp) | (hi >= sl) | (lo <= tp)
+    hit = np.flatnonzero(event)
+    return int(hit[0]) if hit.size else None
+
+
 def _find_exit(side, window, sl, tp, time_barrier, cost, load_ticks):
     """Pierwsza dotknięta bariera. Zwraca (Fill, ExitReason, liczba_ticków)."""
     long = side is Side.LONG
@@ -176,7 +204,9 @@ def _find_exit(side, window, sl, tp, time_barrier, cost, load_ticks):
     lo_col, hi_col, op_col = ("bid_low", "bid_high", "bid_open") if long else \
                              ("ask_low", "ask_high", "ask_open")
 
-    for bar in window.iter_rows(named=True):
+    i = _first_event(side, window, sl, tp)
+    if i is not None:
+        bar = window.row(i, named=True)
         op, lo, hi = bar[op_col], bar[lo_col], bar[hi_col]
         spread = bar["spread_max"]
 
@@ -202,8 +232,7 @@ def _find_exit(side, window, sl, tp, time_barrier, cost, load_ticks):
 
         if hit_sl:
             return _stop_fill(side, bar["ts"], sl, spread, cost), ExitReason.STOP_LOSS, 0
-        if hit_tp:
-            return Fill(bar["ts"], tp, spread), ExitReason.TAKE_PROFIT, 0
+        return Fill(bar["ts"], tp, spread), ExitReason.TAKE_PROFIT, 0
 
     # --- bariera czasowa ---------------------------------------------------
     last = window.row(-1, named=True)
