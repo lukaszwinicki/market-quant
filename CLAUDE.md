@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (198 testów):
+Gotowe (251 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -122,7 +122,8 @@ Gotowe (198 testów):
   liczony dwa razy (w cenach fillów i w `cost`); teraz od `gross`
   odejmowana jest tylko dopłata do podłogi, `cost` = max(spread, podłoga)
 - `decision_time_for_bar()` w `resample.py` — odwrotność `last_closed_bar()`
-- `src/features/technical.py` — 6 cech, test kauzalności
+- `src/features/technical.py` — 6 cech, test kauzalności;
+  `compute_features(h1, donchian=55)` → kolumna `donch_pos_{n}` (siatka)
 - `src/labels/triple_barrier.py` — etykiety z `t1`, `overlap_fraction`,
   `effective_sample_size`
 - `src/validation/` — `cpcv.py` (grupy = całe dni, purge po `t1` +
@@ -169,12 +170,37 @@ Moc: połowa CI = 3,4× koszt — na prawdziwych danych test NIE odróżnia
 kosztu policzonego od pominiętego; to robi test martyngałowy + podłoga
 per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier).
 
+- `src/data/calendar.py` — schemat kalendarza (bez wartości), lista
+  zamknięta serii HIGH per waluta, `coverage_gaps()` (każda seria w każdym
+  roku), `blackout()` (ADR-032: 30 min przed … 120 min po zdarzeniu).
+  `scripts/fetch_calendar.py` — cache surowych stron w
+  `data/raw/calendar/`, wynik `data/calendar/<źródło>.parquet`, raport
+  pokrycia. Źródło `fomc`: 2016–2025, 79 planowanych posiedzeń, godzina
+  z komunikatu („For release at 2:00 p.m. EST”), nadzwyczajne pominięte
+- `src/strategy/v1a.py` — reguła V1a + NO TRADE wg ADR-033:
+  `decision_frame()` (warunki per bar), `run_v1a()` (sekwencyjnie: limity
+  bloków walutowych, portfela, jedna pozycja na parę do `t1`), log decyzji
+  z powodem dla KAŻDEGO bara. `rules_from(cfg)`, `grid_from(cfg)`.
+  Testy tylko na syntetyku; na prawdziwych danych jeszcze nie uruchamiane
+
 Prerejestracja przed V1a (ADR-027..031, config `frozen_sha256`
 `2eab678f…`): DSR ≥ 0,95; siatka 7 wariantów jeden-parametr-naraz
 w `signal_v1a.sensitivity_grid`, płaskowyż = każdy sąsiad ≥ 50% E[R]
 baseline, ten sam znak; N = warianty w przebiegach `strategy` (kontrola
 oceniająca sygnał V1a to też `strategy`); wejście tylko gdy cały horyzont
 mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
+ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
+terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
+
+Kalendarz — brakuje 17 serii (raport: `scripts/fetch_calendar.py`):
+US CPI, NFP, PCE, retail sales, GDP advance; EBC decyzja + konferencja,
+HICP flash; BoE, UK CPI, UK labour; BoJ, JP CPI; RBA, AU CPI; BoC, CA CPI.
+Dostępność (2026-09-19): Fed, EBC, BoE, BoC, BoJ odpowiadają 200;
+BLS i RBA dają 403 automatom; FRED/ALFRED (daty publikacji US) wymaga
+darmowego klucza API — użytkownik musi go założyć. Gdy źródło podaje
+tylko datę, godzinę trzeba prerejestrować z cytatem ze źródła (ADR-032).
+Rok 2015 nie jest potrzebny (rozgrzewka; FOMC 2015 nie podaje godziny).
+Do zrobienia przy runnerze V1a: przerwać, gdy `coverage_gaps()` niepuste.
 
 Ustalenia z danych:
 - Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
@@ -199,8 +225,8 @@ w `trials.jsonl`). Sprawdzić w raporcie: liczbę „bez wyniku" (po ADR-026
 powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Ok. 32 ms na
 unikalną transakcję — przy 7 latach rozważyć wektoryzację `_find_exit`.
 
-Równolegle (nie czeka na dane): silnik sygnału V1a + warunki no-trade,
-testy na syntetyku, bez uruchamiania na prawdziwych danych przed
-zamknięciem bramki 0. Największa brakująca część: historyczny kalendarz
-wydarzeń makro do blackoutu (warunek no-trade nr 1) — tylko harmonogram
-z oficjalnych źródeł, zero actual/consensus. Potem bramka 1.
+Równolegle (nie czeka na dane): pozostałe źródła kalendarza (po jednym
+module `calendar_<źródło>.py` z testem na syntetycznym HTML, wzór:
+`calendar_fomc.py`); klucz FRED od użytkownika. Potem runner V1a na
+harnessie (`kind="strategy"`, `n_variants=7`) — uruchamiać dopiero po
+zamknięciu bramki 0 i przy pełnym pokryciu kalendarza. Potem bramka 1.

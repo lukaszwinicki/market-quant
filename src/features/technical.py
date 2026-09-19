@@ -110,11 +110,17 @@ def expanding_percentile_rank(values: pl.Series, min_periods: int) -> pl.Series:
     return pl.Series("vol_pct_252", out).fill_nan(None)
 
 
-def compute_features(h1: pl.DataFrame) -> pl.DataFrame:
-    """Dolicz sześć cech do barów H1. Wejście musi być posortowane po ts."""
+def compute_features(h1: pl.DataFrame, donchian: int = DONCHIAN) -> pl.DataFrame:
+    """Dolicz sześć cech do barów H1. Wejście musi być posortowane po ts.
+
+    `donchian` — okres kanału (parametr swobodny V1a, siatka ADR-028).
+    Kolumna nazywa się `donch_pos_{donchian}`, żeby wariant był widoczny
+    w nazwie i nie dało się pomylić cech z różnych przebiegów.
+    """
     if h1.is_empty():
-        return h1.with_columns([pl.lit(None, pl.Float64).alias(c)
-                                for c in FEATURE_COLUMNS])
+        names = [f"donch_pos_{donchian}" if c == "donch_pos_55" else c
+                 for c in FEATURE_COLUMNS]
+        return h1.with_columns([pl.lit(None, pl.Float64).alias(c) for c in names])
 
     df = h1.sort("ts")
     a_h1 = atr(df, ATR_PERIOD)
@@ -131,13 +137,13 @@ def compute_features(h1: pl.DataFrame) -> pl.DataFrame:
         for n in MOM_LOOKBACKS
     ])
 
-    lo = pl.col("bid_low").rolling_min(DONCHIAN, min_samples=DONCHIAN)
-    hi = pl.col("bid_high").rolling_max(DONCHIAN, min_samples=DONCHIAN)
+    lo = pl.col("bid_low").rolling_min(donchian, min_samples=donchian)
+    hi = pl.col("bid_high").rolling_max(donchian, min_samples=donchian)
     df = df.with_columns(
         pl.when(hi > lo)
         .then((pl.col("bid_close") - lo) / (hi - lo))
         .otherwise(None)                      # zakres zerowy: cecha nieokreślona
-        .alias("donch_pos_55")
+        .alias(f"donch_pos_{donchian}")
     )
 
     return _attach_daily_volatility(df)
