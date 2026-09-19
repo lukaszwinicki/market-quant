@@ -34,6 +34,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data import calendar_bea as bea  # noqa: E402
+from src.data import calendar_bls as bls  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
 from src.data import calendar_fred as fred  # noqa: E402
 from src.data.calendar import (  # noqa: E402
@@ -185,7 +186,43 @@ def build_bea(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
-SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea}
+def check_against_alfred(name: str, events: list[dict], years: range) -> None:
+    """Dni publikacji muszą się zgadzać z ALFRED co do dnia — inaczej błąd."""
+    start, end = dt.date(years.start, 1, 1), dt.date(years.stop - 1, 12, 31)
+    days = {e["timestamp_utc"].astimezone(bls.NY).date() for e in events}
+    alfred = {d for d in alfred_first_releases(name, years) if start <= d <= end}
+    if days != alfred:
+        raise RuntimeError(f"{name}: źródło vs ALFRED — tylko źródło: {sorted(days - alfred)}, "
+                           f"tylko ALFRED: {sorted(alfred - days)}")
+
+
+def build_bls(years: range) -> pl.DataFrame:
+    """CPI i NFP z rocznych kalendarzy BLS zapisanych ręcznie (bls.gov: 403)."""
+    cache = RAW / "bls"
+    pages = {}
+    for y in years:
+        url = bls.schedule_url(y)
+        path = cache / re.sub(r"[^A-Za-z0-9._-]", "_", url.split("://", 1)[1])
+        if not path.exists():
+            raise RuntimeError(f"brak {path} — bls.gov blokuje skrypty; zapisz {url} "
+                               "w przeglądarce jako HTML")
+        pages[y] = (url, path.read_text(encoding="utf-8", errors="replace"))
+    rows = []
+    for name in bls.TITLES:
+        events = [{"timestamp_utc": t, "currency": "USD", "name": name, "rank": "HIGH",
+                   "source": url}
+                  for y, (url, html) in pages.items()
+                  for t in bls.release_times_utc(html, name) if t.year == y]
+        check_against_alfred(name, events, years)
+        hours = pl.Series([e["timestamp_utc"].astimezone(bls.NY).strftime("%H:%M")
+                           for e in events])
+        log.info("BLS %s: %d publikacji, godziny ET %s", name, len(events),
+                 dict(sorted(hours.value_counts().iter_rows())))
+        rows += events
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
+SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls}
 
 
 def main() -> int:
