@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_bls as bls  # noqa: E402
+from src.data import calendar_boc as boc  # noqa: E402
 from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
@@ -301,8 +302,36 @@ def build_ecb(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
+def build_boc(years: range) -> pl.DataFrame:
+    """Decyzje BoC: daty i godziny z rocznych harmonogramów, sprawdzane z komunikatami."""
+    cache = RAW / "boc"
+    decisions, schedules = {}, {}
+    for page in range(1, 200):
+        d, s = boc.listing_links(fetch(boc.listing_url(page), cache))
+        if not d:
+            raise RuntimeError(f"BoC: strona listy {page} bez decyzji — zmiana układu?")
+        decisions.update(d)
+        schedules.update(s)
+        # Harmonogram na rok R wychodzi latem roku R − 1.
+        if min(d).year < years.start - 1:
+            break
+    parsed = []
+    for url, published in sorted(schedules.items(), key=lambda kv: kv[1]):
+        if published[0] >= years.start - 1:
+            dates, at = boc.schedule_dates(fetch(url, cache), url)
+            parsed.append((published, dates, at, url))
+    rows = [{"timestamp_utc": t, "currency": "CAD", "name": "BOC_RATE", "rank": "HIGH",
+             "source": url}
+            for t, url in boc.scheduled_times_utc(parsed, decisions)
+            if years.start <= t.year <= years.stop - 1]
+    hours = pl.Series([r["timestamp_utc"].astimezone(boc.ET).strftime("%Y %H:%M") for r in rows])
+    log.info("BoC BOC_RATE: %d decyzji, rok i godzina ET %s", len(rows),
+             dict(sorted(hours.value_counts().iter_rows())))
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
-           "census": build_census, "ecb": build_ecb}
+           "census": build_census, "ecb": build_ecb, "boc": build_boc}
 
 
 def main() -> int:
