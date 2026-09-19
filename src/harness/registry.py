@@ -23,6 +23,19 @@ kopiowana bajt w bajt, z sha256 całego pliku i osobno sekcji
 `frozen: true`: porównanie `frozen_sha256` między wpisami pokazuje
 od razu, które próby powstały na innej prerejestracji.
 
+CO JEST PRÓBĄ (ADR-029)
+
+Każde uruchomienie deklaruje `kind` PRZED wynikiem:
+
+    strategy  — ocenia sygnał V1a albo którykolwiek jego wariant
+    control   — wejścia niezależne od sygnału (losowe, buy & hold, koszyk)
+    infra     — przebiegi techniczne bez oceny wyniku
+
+N (do DSR i do limitu 50 prób) = suma `n_variants` po przebiegach
+`strategy`, łącznie z przerwanymi. Wpisy bez `kind` (sprzed ADR-029)
+liczą się jako `strategy` — konserwatywnie. Kontrola, która ocenia
+sygnał, jest przebiegiem `strategy` niezależnie od celu.
+
 `trials.jsonl` jest wersjonowany, więc po pierwszym uruchomieniu drzewo
 jest zawsze „brudne" — przez sam rejestr. Ten jeden plik jest wyłączony
 z wykrywania zmian.
@@ -54,6 +67,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TRIALS_FILE = "trials.jsonl"
 CONFIG_REL = "config/v1_baseline.yaml"
 PACKAGES = ("polars", "numpy", "pyarrow", "PyYAML")
+KINDS = ("strategy", "control", "infra")
 
 
 @dataclass(frozen=True)
@@ -150,13 +164,24 @@ def read_trials(path: Path) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def n_trials(path: Path) -> int:
-    """Liczba prób = liczba rozpoczętych uruchomień, także przerwanych.
+def _starts(path: Path) -> dict[str, dict]:
+    return {r["run_id"]: r for r in read_trials(path) if r["event"] == "start"}
 
-    Bez filtrowania po statusie i celu: każde kryterium wykluczające
-    byłoby ręcznym pominięciem (`manual_skip_allowed: false`).
+
+def n_runs(path: Path) -> int:
+    """Liczba rozpoczętych uruchomień wszystkich kategorii, także przerwanych."""
+    return len(_starts(path))
+
+
+def n_trials(path: Path) -> int:
+    """N do DSR i do limitu prób (ADR-029): warianty w przebiegach `strategy`.
+
+    Bez filtrowania po statusie: przerwany przebieg też jest próbą.
+    Kategoria pochodzi z wpisu `start`, zapisanego przed wynikiem — to nie
+    jest ręczne pominięcie. Brak `kind` = `strategy` (wpisy sprzed ADR-029).
     """
-    return len({r["run_id"] for r in read_trials(path) if r["event"] == "start"})
+    return sum(int(r.get("n_variants", 1)) for r in _starts(path).values()
+               if r.get("kind", "strategy") == "strategy")
 
 
 @dataclass
@@ -180,6 +205,8 @@ def start_run(
     purpose: str,
     params: dict | None = None,
     *,
+    kind: str,
+    n_variants: int = 1,
     repo: Path = ROOT,
     config_rel: str = CONFIG_REL,
     runs_dir: Path | None = None,
@@ -187,15 +214,23 @@ def start_run(
 ) -> Iterator[Run]:
     """Otwórz uruchomienie: katalog, kopia konfiguracji, wpis `start`.
 
-        with start_run("gate0 random control", {"seed": 1, "n_reps": 200}) as run:
+        with start_run("gate0 random control", {"seed": 1, "n_reps": 200},
+                       kind="control") as run:
             ...
             run.record(mean_r=-0.08, n=1234)
 
     `purpose` jest wymagany — za pół roku lista hashów bez opisu nic nie
-    powie. Wyjątek z ciała jest zapisywany w `end` i propagowany dalej.
+    powie. `kind` i `n_variants` — patrz „CO JEST PRÓBĄ” w nagłówku.
+    Wyjątek z ciała jest zapisywany w `end` i propagowany dalej.
     """
     if not purpose.strip():
         raise ValueError("purpose nie może być pusty")
+    if kind not in KINDS:
+        raise ValueError(f"kind musi być jednym z {KINDS}, jest {kind!r}")
+    if not isinstance(n_variants, int) or n_variants < 1:
+        raise ValueError("n_variants musi być dodatnią liczbą całkowitą")
+    if kind != "strategy" and n_variants != 1:
+        raise ValueError("n_variants dotyczy tylko przebiegów strategy")
     params = dict(params or {})
     runs_dir = runs_dir or repo / "runs"
     trials_path = trials_path or repo / TRIALS_FILE
@@ -215,6 +250,8 @@ def start_run(
         "run_id": run_id,
         "ts_utc": now.isoformat(),
         "purpose": purpose,
+        "kind": kind,
+        "n_variants": n_variants,
         "params": params,
         "git_commit": git.commit,
         "git_dirty": git.dirty,

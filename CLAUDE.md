@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (194 testy):
+Gotowe (198 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -135,7 +135,9 @@ Gotowe (194 testy):
   `runs/<ts>-<hex>/` (kopia configu, `run.json`, `metrics.json`,
   `diff.patch` gdy drzewo brudne), wpis `start` do `trials.jsonl` PRZED
   kodem badawczym, `end` w `finally` (ok/error/interrupted). `n_trials()`
-  = liczba startów, bez filtrów. Hash commita, sha256 configu i osobno
+  = N wg ADR-029: suma `n_variants` po przebiegach `kind="strategy"`
+  (wpisy bez `kind` = strategy); `n_runs()` = wszystkie starty.
+  `kind` ∈ {strategy, control, infra} obowiązkowe. Hash commita, sha256 configu i osobno
   sekcji `frozen: true`, commit zamrożenia. `trials.jsonl` nie liczy się
   jako brudne drzewo
 - `src/harness/market.py` — `load_m1(symbol, start, end, cfg)` czyta tylko
@@ -167,13 +169,12 @@ Moc: połowa CI = 3,4× koszt — na prawdziwych danych test NIE odróżnia
 kosztu policzonego od pominiętego; to robi test martyngałowy + podłoga
 per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier).
 
-Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
-- Próg `deflated_sharpe_min: 0.0` jest pusty — DSR to prawdopodobieństwo
-  ∈ [0,1]. Do wyboru: DSR ≥ 0,5 (≡ SR̂ ≥ SR*₀) albo 0,95 (konwencja
-  z literatury). Pole jest `frozen: true`.
-- Spec §10.1: 6/2 daje 15 **podziałów**, ale 5 **ścieżek**, nie 15.
-- PBO wymaga ≥ 2 wariantów — siatka wrażliwości wokół {55, 2.0, 4.0}
-  musi zostać prerejestrowana przed pierwszym uruchomieniem.
+Prerejestracja przed V1a (ADR-027..031, config `frozen_sha256`
+`2eab678f…`): DSR ≥ 0,95; siatka 7 wariantów jeden-parametr-naraz
+w `signal_v1a.sensitivity_grid`, płaskowyż = każdy sąsiad ≥ 50% E[R]
+baseline, ten sam znak; N = warianty w przebiegach `strategy` (kontrola
+oceniająca sygnał V1a to też `strategy`); wejście tylko gdy cały horyzont
+mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 
 Ustalenia z danych:
 - Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
@@ -190,10 +191,6 @@ Ustalenia z danych:
   wąskim gardłem jest pętla Pythona po ~14k barach M1 w `_find_exit`.
   1000 transakcji × 200 powtórzeń ≈ 100 min — jeśli za wolno,
   wektoryzować wyszukiwanie pierwszego dotknięcia bariery (numpy).
-- Transakcje z końca 2023 z horyzontem w 2024 rozstrzygają się na cenach
-  hold-outu — `load_m1` je zablokuje. Do rozstrzygnięcia przy walidacji.
-- Do decyzji (ADR): czy przebiegi kontroli/infrastruktury liczą się
-  do N w DSR. Rejestr zapisuje `purpose`, `n_trials()` liczy wszystko.
 
 Następne (gdy pobieranie dojdzie do końca 2021): `download_ticks.py
 --retry-failed`, `build_bars.py`, potem `scripts/gate0.py` — przebieg
@@ -201,4 +198,9 @@ zamykający bramkę 0 (nowy symulator, kryteria ADR-025; kolejna próba
 w `trials.jsonl`). Sprawdzić w raporcie: liczbę „bez wyniku" (po ADR-026
 powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Ok. 32 ms na
 unikalną transakcję — przy 7 latach rozważyć wektoryzację `_find_exit`.
-Potem bramka 1: rozkład zerowy dla sygnału V1a.
+
+Równolegle (nie czeka na dane): silnik sygnału V1a + warunki no-trade,
+testy na syntetyku, bez uruchamiania na prawdziwych danych przed
+zamknięciem bramki 0. Największa brakująca część: historyczny kalendarz
+wydarzeń makro do blackoutu (warunek no-trade nr 1) — tylko harmonogram
+z oficjalnych źródeł, zero actual/consensus. Potem bramka 1.

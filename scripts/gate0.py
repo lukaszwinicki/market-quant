@@ -100,7 +100,8 @@ def main() -> int:
         "block_days": boot["block_days"],
         "label_spec": asdict(spec),
     }
-    with start_run("gate0: random-entry negative test on cohort A", params) as run:
+    with start_run("gate0: random-entry negative test on cohort A", params,
+                   kind="control") as run:
         log.info("run %s: %s, %s → %s", run.run_id, ",".join(symbols),
                  start.date(), end.date())
         martingale = martingale_check()

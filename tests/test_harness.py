@@ -17,7 +17,7 @@ from src.harness.market import (
     SealedHoldoutError, cost_model_for, load_m1, sealed_range,
 )
 from src.harness.registry import (
-    freeze_commit, frozen_sections, n_trials, read_trials, start_run,
+    freeze_commit, frozen_sections, n_runs, n_trials, read_trials, start_run,
 )
 from src.labels import triple_barrier
 from src.labels.triple_barrier import LabelSpec, add_business_days, label_events
@@ -69,7 +69,7 @@ def repo(tmp_path):
 
 def test_start_record_is_written_before_the_body_runs(repo):
     """Próba istnieje od chwili startu, nie od chwili sukcesu."""
-    with start_run("test", {"seed": 1}, repo=repo):
+    with start_run("test", {"seed": 1}, repo=repo, kind="strategy"):
         recs = read_trials(repo / "trials.jsonl")
         assert [r["event"] for r in recs] == ["start"]
 
@@ -77,7 +77,7 @@ def test_start_record_is_written_before_the_body_runs(repo):
 def test_failed_run_is_still_a_trial(repo):
     """Wyjątek nie może usunąć próby z licznika — i nie może zostać połknięty."""
     with pytest.raises(ZeroDivisionError):
-        with start_run("crash", repo=repo):
+        with start_run("crash", repo=repo, kind="strategy"):
             1 / 0
     recs = read_trials(repo / "trials.jsonl")
     assert [r["event"] for r in recs] == ["start", "end"]
@@ -88,7 +88,7 @@ def test_failed_run_is_still_a_trial(repo):
 
 def test_interrupted_run_is_still_a_trial(repo):
     with pytest.raises(KeyboardInterrupt):
-        with start_run("ctrl-c", repo=repo):
+        with start_run("ctrl-c", repo=repo, kind="strategy"):
             raise KeyboardInterrupt
     recs = read_trials(repo / "trials.jsonl")
     assert recs[-1]["status"] == "interrupted"
@@ -97,7 +97,7 @@ def test_interrupted_run_is_still_a_trial(repo):
 
 def test_trial_count_is_distinct_started_runs(repo):
     for i in range(3):
-        with start_run(f"r{i}", repo=repo):
+        with start_run(f"r{i}", repo=repo, kind="strategy"):
             pass
     assert n_trials(repo / "trials.jsonl") == 3
     assert len(read_trials(repo / "trials.jsonl")) == 6
@@ -108,14 +108,61 @@ def test_registry_is_append_only(repo):
     path = repo / "trials.jsonl"
     path.write_text('{"event": "start", "run_id": "old"}\n')
     before = path.read_bytes()
-    with start_run("x", repo=repo):
+    with start_run("x", repo=repo, kind="strategy"):
         pass
     assert path.read_bytes().startswith(before)
     assert n_trials(path) == 2
 
 
+def test_only_strategy_variants_count_toward_n(repo):
+    """ADR-029: kontrole i infra są logowane, ale nie są kandydatami na strategię."""
+    path = repo / "trials.jsonl"
+    with start_run("gate0", repo=repo, kind="control"):
+        pass
+    with start_run("smoke", repo=repo, kind="infra"):
+        pass
+    with start_run("v1a grid", repo=repo, kind="strategy", n_variants=7):
+        pass
+    with pytest.raises(RuntimeError):
+        with start_run("v1a baseline", repo=repo, kind="strategy"):
+            raise RuntimeError
+    assert n_trials(path) == 8
+    assert n_runs(path) == 4
+
+
+def test_legacy_entries_without_kind_count_as_strategy(repo):
+    path = repo / "trials.jsonl"
+    path.write_text('{"event": "start", "run_id": "old"}\n')
+    with start_run("gate0", repo=repo, kind="control"):
+        pass
+    assert n_trials(path) == 1
+
+
+def test_kind_is_required_and_validated_before_anything_is_written(repo):
+    path = repo / "trials.jsonl"
+    with pytest.raises(TypeError):
+        with start_run("x", repo=repo):
+            pass
+    for kwargs in [{"kind": "exploration"},
+                   {"kind": "strategy", "n_variants": 0},
+                   {"kind": "control", "n_variants": 7}]:
+        with pytest.raises(ValueError):
+            with start_run("x", repo=repo, **kwargs):
+                pass
+    assert n_runs(path) == 0
+    assert not (repo / "runs").exists()
+
+
+def test_kind_and_variants_are_in_the_start_record(repo):
+    with start_run("grid", repo=repo, kind="strategy", n_variants=7) as run:
+        pass
+    start = read_trials(repo / "trials.jsonl")[0]
+    assert (start["kind"], start["n_variants"]) == ("strategy", 7)
+    assert json.loads((run.dir / "run.json").read_text())["kind"] == "strategy"
+
+
 def test_run_dir_holds_config_copy_manifest_and_metrics(repo):
-    with start_run("gate0", {"seed": 7}, repo=repo) as run:
+    with start_run("gate0", {"seed": 7}, repo=repo, kind="strategy") as run:
         run.record(mean_r=-0.08, n=np_int(1234))
     d = run.dir
     assert d.parent == repo / "runs"
@@ -143,7 +190,7 @@ def test_dirty_tree_is_recorded_with_patch(repo):
     """Wynik z niezacommitowanego kodu musi dać się odtworzyć."""
     (repo / "config" / "v1_baseline.yaml").write_text(CFG_TEXT + "# zmiana\n")
     (repo / "new_module.py").write_text("x = 1\n")
-    with start_run("dirty", repo=repo) as run:
+    with start_run("dirty", repo=repo, kind="strategy") as run:
         pass
     m = json.loads((run.dir / "run.json").read_text())
     assert m["git_dirty"] is True
@@ -155,9 +202,9 @@ def test_dirty_tree_is_recorded_with_patch(repo):
 def test_registry_itself_does_not_make_the_tree_dirty(repo):
     """Po pierwszym uruchomieniu trials.jsonl jest zmieniony — to nie jest
     zmiana kodu i nie może oznaczać każdej kolejnej próby jako brudnej."""
-    with start_run("first", repo=repo):
+    with start_run("first", repo=repo, kind="strategy"):
         pass
-    with start_run("second", repo=repo) as run:
+    with start_run("second", repo=repo, kind="strategy") as run:
         pass
     assert json.loads((run.dir / "run.json").read_text())["git_dirty"] is False
 
@@ -166,7 +213,7 @@ def test_frozen_hash_changes_only_with_frozen_sections(repo):
     cfg_path = repo / "config" / "v1_baseline.yaml"
 
     def frozen_hash():
-        with start_run("h", repo=repo) as run:
+        with start_run("h", repo=repo, kind="strategy") as run:
             pass
         return json.loads((run.dir / "run.json").read_text())["frozen_sha256"]
 
@@ -184,7 +231,7 @@ def test_frozen_sections_finds_nested_flags():
 
 def test_empty_purpose_is_rejected(repo):
     with pytest.raises(ValueError):
-        with start_run("  ", repo=repo):
+        with start_run("  ", repo=repo, kind="strategy"):
             pass
     assert n_trials(repo / "trials.jsonl") == 0
 
