@@ -71,11 +71,13 @@ def add_business_days(t: dt.datetime, n: int) -> dt.datetime:
     Świadomie bez kalendarza świąt: rynek FX w święta bywa otwarty, a
     zakodowanie listy świąt wprowadziłoby założenie, którego nie chcemy.
     Brak danych i tak obsługuje symulator (ExitReason.NO_DATA).
+    Ujemne n przesuwa wstecz (okno purge przed grupą testową CPCV).
     """
     out = t
-    left = n
+    step = dt.timedelta(days=1 if n >= 0 else -1)
+    left = abs(n)
     while left > 0:
-        out += dt.timedelta(days=1)
+        out += step
         if out.weekday() < 5:
             left -= 1
     return out

@@ -164,6 +164,12 @@ def test_business_days_skip_weekends():
     assert add_business_days(friday, 5) == dt.datetime(2020, 1, 10, 10, tzinfo=UTC)
 
 
+def test_negative_business_days_go_back_over_weekend():
+    monday = dt.datetime(2020, 1, 6, 10, tzinfo=UTC)
+    assert add_business_days(monday, -1) == dt.datetime(2020, 1, 3, 10, tzinfo=UTC)
+    assert add_business_days(add_business_days(monday, 10), -10) == monday
+
+
 def test_ten_business_days_spans_two_calendar_weeks():
     thursday = dt.datetime(2020, 1, 2, 10, tzinfo=UTC)
     end = add_business_days(thursday, 10)
