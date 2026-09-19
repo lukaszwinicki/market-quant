@@ -385,6 +385,54 @@ Surowy spread Dukascopy (~0,2–0,4 pipsa round-turn na majorsach) jest węższy
 
 ---
 
+## ADR-025 — Operacjonalizacja kryterium bramki 0 „strategia losowa daje expectancy ≈ −koszt”
+
+**Status:** ACCEPTED · 2026-09-19 · **Doprecyzowuje:** `gates.gate_0` (bez zmiany wartości `frozen: true`)
+
+**Kontekst:** Tekst kryterium nie mówi, co znaczy „≈”. Pierwszy przebieg `scripts/gate0.py` (`20260919T134506Z-c4710e`, 2015-01 → 2016-04-28, 23 719 transakcji) zmierzył koszt 0,0106 R przy połowie CI95 średniej 0,036 R. Szum jest 3,4× większy od mierzonej wielkości. Na prawdziwych danych równość `E[R] = −koszt` jest nierozróżnialna od `E[R] = 0`, czyli koszt policzony i pominięty dają ten sam werdykt. Żadna tolerancja tego nie naprawi: przy barierach w `atr_d1_14` (ADR-023) koszt jest o rząd wielkości mniejszy od szumu dostępnego w kilku latach danych.
+
+**Decyzja:** Kryterium jest spełnione, gdy przechodzą wszystkie trzy części. Każda testuje to, co da się zmierzyć:
+
+| Część | Dane | Kryterium | Wykrywa |
+|---|---|---|---|
+| a. Rachunek kosztu | każda transakcja, prawdziwe | `cost = max(spread_implikowany, podłoga)` i `net = gross − (cost − spread_implikowany)`; zero naruszeń | koszt pominięty, podwójny, brak podłogi |
+| b. Martyngał | syntetyczne (`tests/test_controls.py`) | brutto (R + koszt_R) w ±3 SE od 0 przy znanym koszcie 0,5 R | koszt źle odjęty w symulatorze |
+| c. Losowe wejścia | prawdziwe (`scripts/gate0.py`) | CI95 brutto zawiera 0 **oraz** połowa CI95 ≤ 0,05 R | look-ahead, optymistyczna kolejność barier |
+
+Wynik części c z połową CI > 0,05 R to **„nierozstrzygnięte”**, nie „przechodzi”. Wymaga więcej danych.
+
+**Uzasadnienie progu 0,05 R:** połowa progu bramki 2 (0,10 R). Bias symulatora poniżej 0,05 R sam nie wyprodukuje fałszywego przejścia bramki 2, a większy zostaje wykryty. Bez progu szerokości mało danych daje szeroki CI, który zawsze zawiera 0, i test przechodzi za darmo.
+
+**Kolejność zdarzeń (jawnie):** warunek „CI95 brutto ∋ 0” był w kodzie przed pierwszym przebiegiem (dowód: `runs/20260919T134506Z-c4710e/diff.patch`). Próg szerokości 0,05 R dodano **po** zobaczeniu wyniku, w którym połowa CI wyniosła 0,036 R. Próg wyprowadzono z progu bramki 2, nie z tego wyniku. Pierwszy przebieg nie zamyka bramki 0, bo ADR-026 zmienia symulator.
+
+---
+
+## ADR-026 — Bariera czasowa w czasie zamkniętego rynku: wyjście po ostatnim barze przed zamknięciem
+
+**Status:** ACCEPTED · 2026-09-19
+
+**Kontekst:** Bariera czasowa to moment decyzji + 10 dni roboczych. Dla wejścia w niedzielę 21:00–23:00 UTC (otwarcie tygodnia) wypada w piątek o tej samej godzinie, już po zamknięciu rynku (ostatni bar 20:59 lub 21:59 UTC zależnie od DST). Symulator uznawał brak barów przed barierą za `NO_DATA`, a `label_events` usuwał takie transakcje z próby. W pierwszym przebiegu bramki 0 dotyczyło to ~1,2% losowych wejść. Strategia traciłaby w ten sposób **wszystkie** wejścia z otwarcia tygodnia, po cichu i selektywnie.
+
+Przyczyna: symulator nie odróżniał „rynek zamknięty” (wynik znany) od „brak danych” (wynik nieznany).
+
+**Decyzja:** Jeżeli między ostatnim barem okna a barierą czasową rynek był zamknięty, transakcja kończy się `TIME_BARRIER` po cenie zamknięcia ostatniego bara (bid dla long, ask dla short, spread z tego bara). Zamknięcie rynku oznacza:
+
+- weekend: ostatni bar w piątek, bariera w piątek po nim, w sobotę albo w niedzielę przed otwarciem;
+- 25.12 i 1.01 (`MARKET_HOLIDAYS`, ta sama lista co w raporcie jakości) oraz dzień przed nimi po ostatnim barze.
+
+Każdy inny brak danych przed barierą pozostaje `NO_DATA`, żeby awarie feedu nadal były widoczne.
+
+**Uzasadnienie:** tak postępuje trader, którego horyzont kończy się w weekend: zamyka pozycję przed zamknięciem rynku. Nie jest to optymistyczne, bo spread przy piątkowym zamknięciu jest szeroki i pochodzi z ticków. Nie wymaga danych spoza okna `[decyzja, bariera]`. `time_barrier_business_days: 10` bez zmian.
+
+**Odrzucone:**
+- Wyjście po otwarciu po weekendzie: dokłada lukę weekendową i dwa dni finansowania, których decyzja o wejściu nie zakładała.
+- Zakaz wejść w niedzielę wieczorem: nowy warunek na zamkniętej liście `no_trade_conditions`, czyli zmiana prerejestracji.
+- Status quo: selektywne, nielogowane usuwanie wejść z otwarcia tygodnia.
+
+**Konsekwencje:** wyniki symulatora sprzed tej zmiany (pierwszy przebieg bramki 0) są nieaktualne. Bramkę 0 zamyka dopiero przebieg na nowym symulatorze. Wejście w piątek po zamknięciu nadal nie jest możliwe (brak danych w momencie decyzji), i słusznie.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
