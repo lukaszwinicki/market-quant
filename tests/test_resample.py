@@ -11,8 +11,8 @@ import pytest
 
 from src.data.dukascopy import TickBlock
 from src.data.resample import (
-    FREQ_H1, FREQ_M1, aggregate_bars, bars_from_ticks, last_closed_bar,
-    ticks_to_frame, validate_bars,
+    FREQ_H1, FREQ_M1, aggregate_bars, bars_from_ticks, decision_time_for_bar,
+    last_closed_bar, ticks_to_frame, validate_bars,
 )
 
 UTC = dt.timezone.utc
@@ -58,6 +58,20 @@ def test_last_closed_bar_mid_interval():
 def test_last_closed_bar_requires_timezone():
     with pytest.raises(ValueError):
         last_closed_bar(dt.datetime(2020, 1, 2, 10), 3600)
+
+
+def test_decision_time_is_inverse_of_last_closed_bar():
+    """Bar 09:00 pozwala decydować najwcześniej o 10:00, nie o 09:00."""
+    bar = dt.datetime(2020, 1, 2, 9, tzinfo=UTC)
+    assert decision_time_for_bar(bar, 3600) == H
+    for h in range(0, 48, 7):
+        t = bar + dt.timedelta(hours=h)
+        assert last_closed_bar(decision_time_for_bar(t, 3600), 3600) == t
+
+
+def test_decision_time_rejects_non_bar_label():
+    with pytest.raises(ValueError):
+        decision_time_for_bar(dt.datetime(2020, 1, 2, 9, 30, tzinfo=UTC), 3600)
 
 
 # --- OHLC -------------------------------------------------------------------

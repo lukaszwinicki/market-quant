@@ -154,6 +154,20 @@ def last_closed_bar(decision_time: dt.datetime, freq_seconds: int) -> dt.datetim
     return dt.datetime.fromtimestamp(start_of_current - freq_seconds, tz=UTC)
 
 
+def decision_time_for_bar(bar_label: dt.datetime, freq_seconds: int) -> dt.datetime:
+    """Najwcześniejszy moment decyzji, w którym bar `bar_label` jest zamknięty.
+
+    Odwrotność `last_closed_bar()`: bar 09:00 (H1) -> decyzja 10:00.
+    Gwarantuje `last_closed_bar(decision_time_for_bar(t, f), f) == t`.
+    """
+    if bar_label.tzinfo is None:
+        raise ValueError("bar_label musi być tz-aware (UTC)")
+    epoch = int(bar_label.astimezone(UTC).timestamp())
+    if epoch % freq_seconds:
+        raise ValueError(f"{bar_label} nie jest etykietą bara o okresie {freq_seconds}s")
+    return dt.datetime.fromtimestamp(epoch + freq_seconds, tz=UTC)
+
+
 def validate_bars(bars: pl.DataFrame) -> None:
     """Niezmienniki, których naruszenie oznacza błąd w pipeline, nie na rynku."""
     if bars.is_empty():

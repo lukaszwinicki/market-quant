@@ -112,19 +112,25 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (121 testów):
+Gotowe (142 testy):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
   raport `reports/data_quality.md` (2015–16: bramka 0 przechodzi)
 - `src/execution/simulator.py` — fill bid/ask, luki, pesymistyczna
-  kolejność barier, podłoga kosztu (ADR-024)
+  kolejność barier, podłoga kosztu (ADR-024). Naprawione: spread był
+  liczony dwa razy (w cenach fillów i w `cost`); teraz od `gross`
+  odejmowana jest tylko dopłata do podłogi, `cost` = max(spread, podłoga)
+- `decision_time_for_bar()` w `resample.py` — odwrotność `last_closed_bar()`
 - `src/features/technical.py` — 6 cech, test kauzalności
 - `src/labels/triple_barrier.py` — etykiety z `t1`, `overlap_fraction`,
   `effective_sample_size`
 - `src/validation/` — `cpcv.py` (grupy = całe dni, purge po `t1` +
   podłoga 10 dni rob., embargo 5 dni od ostatniego `t1` testu),
-  `dsr.py` (PSR/DSR, `n_obs` = efektywne n), `pbo.py` (CSCV, N ≥ 2)
+  `dsr.py` (PSR/DSR, `n_obs` = efektywne n), `pbo.py` (CSCV, N ≥ 2),
+  `controls.py` (losowe wejścia dopasowane per (para, kierunek), rozkład
+  zerowy, p-value), `bootstrap.py` (bloki 20 dni roboczych, weekend →
+  poniedziałek). Test martyngałowy: losowe wejścia dają E[R] = −koszt
 
 Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
 - Próg `deflated_sharpe_min: 0.0` jest pusty — DSR to prawdopodobieństwo
@@ -145,6 +151,11 @@ Ustalenia z danych:
 - `data/raw/dukascopy/EURUSD/2019,2020` — 130 godzin próbek z testów
   dekodera; poprawne, downloader je pominie.
 
-Następne: CPCV z purge/embargo na `t1`, DSR, PBO, kontrole losowe →
-harness z automatycznym `trials.jsonl` → powtórka testu negatywnego
-bramki 0 na danych wieloletnich.
+- Wydajność: `label_events` filtruje całe M1 dla każdego zdarzenia.
+  Na latach danych × setkach powtórzeń kontroli losowej to za wolno —
+  harness musi ciąć M1 do okna [ts, ts + horyzont] (np. `search_sorted`).
+
+Następne: harness (config + hash gita → `runs/<ts>/`, automatyczny
+append do `trials.jsonl`, wycinanie okien M1) → powtórka testu
+negatywnego bramki 0 na danych wieloletnich (kontrola losowa +
+bootstrap, E[R] vs −`cost_r`).

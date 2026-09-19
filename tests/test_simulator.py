@@ -211,6 +211,23 @@ def test_cost_floor_applies_when_real_spread_is_tighter():
     assert res.cost == pytest.approx(1.5 * PIP)        # podłoga, nie 0.3
 
 
+@pytest.mark.parametrize("spread_pips", [0.3, 4.0])
+def test_spread_is_charged_once_not_twice(spread_pips):
+    """Płaski rynek: jedyną stratą jest efektywny koszt max(spread, podłoga).
+
+    Spread siedzi już w cenach fillów (wejście po ask, wyjście po bid);
+    odjęcie go drugi raz w `cost` zawyżało koszt o cały spread."""
+    cost = CostModel(pip=PIP, min_roundturn_pips=1.5,
+                     entry_slippage_x_spread=0.0, stop_slippage_x_spread=0.0)
+    bars = m1([{"min": i, **FLAT, "spread": spread_pips * PIP} for i in range(6)])
+    res = simulate_trade(Side.LONG, T0, sl=1.0900, tp=1.1100,
+                         time_barrier=T0 + dt.timedelta(minutes=5),
+                         m1=bars, cost=cost)
+    effective = max(spread_pips, 1.5) * PIP
+    assert res.net == pytest.approx(-effective)
+    assert res.cost == pytest.approx(effective)
+
+
 def test_stop_slippage_is_adverse_and_in_the_price():
     cost = CostModel(pip=PIP, min_roundturn_pips=0.0,
                      entry_slippage_x_spread=0.0, stop_slippage_x_spread=1.0)

@@ -1,0 +1,85 @@
+"""Block bootstrap expectancy po dniach (PROJECT_SPEC §6 pooling, §10.2 #6).
+
+JEDNOSTKA: DZIEŃ, NIE TRANSAKCJA
+
+Transakcje z tego samego dnia na sześciu parach dzielą czynnik USD i są
+skorelowane; transakcje z sąsiednich dni dzielą okno wynikowe (~99%
+nakładania). Bootstrap po obserwacjach traktowałby je jako niezależne
+i zaniżałby błąd standardowy. Losujemy więc bloki `block_days` kolejnych
+dni roboczych (kołowo) i w nich wszystkie transakcje wszystkich par.
+
+Dni bez transakcji zostają w osi — blok 20 dni znaczy 20 dni kalendarza
+handlowego, nie 20 dni z sygnałem.
+
+Wejścia z weekendu (FX otwiera się w niedzielę ~22:00 UTC) należą do
+sesji poniedziałkowej i są do niej przypisywane.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import polars as pl
+
+
+@dataclass(frozen=True)
+class BootstrapResult:
+    expectancy: float        # średnie R na transakcję w oryginalnej próbie
+    se: float                # odchylenie bootstrapowe
+    t_stat: float            # expectancy / se
+    ci_low: float            # percentylowy przedział 95%
+    ci_high: float
+    n_trades: int
+    n_days: int
+    n_reps: int
+
+
+def daily_totals(trades: pl.DataFrame, value: str = "r") -> tuple[np.ndarray, np.ndarray]:
+    """(suma wartości, liczba transakcji) dla każdego dnia roboczego od
+    pierwszego do ostatniego wejścia; dni puste = (0, 0)."""
+    day = trades["ts"].dt.date()
+    wd = day.dt.weekday()                       # 1 = pon ... 7 = nd
+    day = (pl.DataFrame({"d": day, "wd": wd})
+           .select(pl.when(pl.col("wd") >= 6)
+                   .then(pl.col("d") + pl.duration(days=8 - pl.col("wd")))
+                   .otherwise(pl.col("d")).alias("d"))["d"])
+    per_day = (pl.DataFrame({"d": day, "v": trades[value]})
+               .group_by("d").agg(pl.col("v").sum().alias("s"), pl.len().alias("n")))
+    axis = pl.date_range(day.min(), day.max(), "1d", eager=True)
+    axis = axis.filter(axis.dt.weekday() <= 5).alias("d").to_frame()
+    full = axis.join(per_day, on="d", how="left").fill_null(0).sort("d")
+    return full["s"].to_numpy().astype(float), full["n"].to_numpy().astype(float)
+
+
+def block_bootstrap_expectancy(trades: pl.DataFrame, block_days: int = 20,
+                               n_reps: int = 10_000, seed: int = 0,
+                               value: str = "r", chunk: int = 1000) -> BootstrapResult:
+    if trades.height < 2:
+        raise ValueError("za mało transakcji")
+    sums, counts = daily_totals(trades, value)
+    d = len(sums)
+    if d < 2 * block_days:
+        raise ValueError(f"{d} dni to za mało na bloki po {block_days}")
+
+    rng = np.random.default_rng(seed)
+    n_blocks = -(-d // block_days)
+    offsets = np.arange(block_days)
+    stats = np.empty(n_reps)
+    for lo in range(0, n_reps, chunk):
+        k = min(chunk, n_reps - lo)
+        starts = rng.integers(0, d, size=(k, n_blocks))
+        idx = ((starts[:, :, None] + offsets) % d).reshape(k, -1)[:, :d]
+        n = counts[idx].sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            stats[lo:lo + k] = sums[idx].sum(axis=1) / n
+
+    stats = stats[~np.isnan(stats)]
+    exp = float(sums.sum() / counts.sum())
+    se = float(stats.std(ddof=1))
+    lo_ci, hi_ci = np.percentile(stats, [2.5, 97.5])
+    return BootstrapResult(
+        expectancy=exp, se=se, t_stat=exp / se if se > 0 else float("nan"),
+        ci_low=float(lo_ci), ci_high=float(hi_ci),
+        n_trades=int(counts.sum()), n_days=d, n_reps=len(stats),
+    )

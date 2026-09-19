@@ -95,9 +95,9 @@ class TradeResult:
     entry: Fill
     exit: Fill
     reason: ExitReason
-    gross: float          # ruch ceny w jednostkach ceny, przed kosztami
-    cost: float           # spread + poślizg + ewentualna dopłata do podłogi
-    net: float            # gross - cost
+    gross: float          # wynik z cen fillów — już po spreadzie i poślizgu
+    cost: float           # efektywny koszt max(spread, podłoga); poślizg jest w cenie
+    net: float            # gross - dopłata do podłogi (spread NIE drugi raz)
     risk: float           # |entry_intent - sl|, mianownik dla R
     ticks_scanned: int    # 0 = rozstrzygnięte na barach, >0 = schodziliśmy do ticków
 
@@ -143,11 +143,11 @@ def simulate_trade(
     )
 
     gross = (ex_fill.price - entry.price) if side is Side.LONG else (entry.price - ex_fill.price)
-    cost_charged = _total_cost(entry, ex_fill, cost)
+    implied, top_up = _costs(entry, ex_fill, cost)
 
     return TradeResult(
         side=side, entry=entry, exit=ex_fill, reason=reason,
-        gross=gross, cost=cost_charged, net=gross - cost_charged,
+        gross=gross, cost=implied + top_up, net=gross - top_up,
         risk=risk, ticks_scanned=scanned,
     )
 
@@ -248,15 +248,17 @@ def _resolve_on_ticks(side, bar, sl, tp, load_ticks) -> tuple[ExitReason, int]:
     return ExitReason.STOP_LOSS, len(px)
 
 
-def _total_cost(entry: Fill, exit_: Fill, cost: CostModel) -> float:
-    """Spread + poślizg, z dopłatą do podłogi detalicznej.
+def _costs(entry: Fill, exit_: Fill, cost: CostModel) -> tuple[float, float]:
+    """(spread zawarty w cenach fillów, dopłata do podłogi detalicznej).
 
     Ceny fillów już zawierają spread (wejście po gorszej stronie, wyjście
-    po gorszej stronie), więc implikowany koszt spreadu to pół spreadu
-    z wejścia plus pół z wyjścia. Poślizg NIE jest tu doliczany — siedzi
-    już w cenie fillu (`_stop_fill`). Podłoga z ADR-024 wchodzi dopiero
-    wtedy, gdy rzeczywisty koszt był od niej niższy — a na majorsach jest
-    tak prawie zawsze.
+    po gorszej stronie), więc `gross` jest już po spreadzie — od wyniku
+    odejmujemy WYŁĄCZNIE dopłatę. Implikowany spread to pół spreadu
+    z wejścia plus pół z wyjścia. Poślizg też siedzi w cenie fillu
+    (`_stop_fill`) i nie jest tu doliczany.
+
+    Efektywny koszt (ADR-024) = implied + dopłata = max(implied, podłoga).
+    Podłoga wiąże na majorsach prawie zawsze.
     """
     implied = 0.5 * entry.spread + 0.5 * exit_.spread
-    return max(implied, cost.floor)
+    return implied, max(0.0, cost.floor - implied)
