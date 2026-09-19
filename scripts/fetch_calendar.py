@@ -28,6 +28,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import unescape as html_unescape
 from pathlib import Path
 
 import polars as pl
@@ -40,6 +41,7 @@ from src.data import calendar_bea as bea  # noqa: E402
 from src.data import calendar_bls as bls  # noqa: E402
 from src.data import calendar_boc as boc  # noqa: E402
 from src.data import calendar_boe as boe  # noqa: E402
+from src.data import calendar_boj as boj  # noqa: E402
 from src.data import calendar_census as census  # noqa: E402
 from src.data import calendar_ecb as ecb  # noqa: E402
 from src.data import calendar_fomc as fomc  # noqa: E402
@@ -357,13 +359,20 @@ def build_boc(years: range) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
 
 
-def pdf_first_page(url: str, cache: Path) -> str:
+def plain_text(html_text: str) -> str:
+    """Tekst strony bez znaczników — dla źródeł, które dają to samo w HTML i w PDF."""
+    body = re.sub(r"<(script|style)\b.*?</\1>", " ", html_text, flags=re.S | re.I)
+    return re.sub(r"\s+", " ", html_unescape(re.sub(r"<[^>]+>", " ", body)))
+
+
+def pdf_first_page(url: str, cache: Path, pages: int = 1) -> str:
     import io
 
     from pypdf import PdfReader
 
     logging.getLogger("pypdf").setLevel(logging.ERROR)
-    return PdfReader(io.BytesIO(fetch_bytes(url, cache))).pages[0].extract_text()
+    reader = PdfReader(io.BytesIO(fetch_bytes(url, cache)))
+    return " ".join(p.extract_text() for p in reader.pages[:pages])
 
 
 def build_statcan(years: range) -> pl.DataFrame:
@@ -579,9 +588,38 @@ def build_jp(years: range) -> pl.DataFrame:
     return pl.DataFrame(events, schema=CALENDAR_SCHEMA)
 
 
+def build_boj(years: range) -> pl.DataFrame:
+    """Decyzje BoJ: dzień z listy protokołów, godzina = koniec posiedzenia z protokołu."""
+    cache = RAW / "boj"
+    rows = []
+    for y in years:
+        url = boj.minutes_index_url(y)
+        meetings = boj.minutes_links(fetch(url, cache))
+        if not meetings:
+            raise RuntimeError(f"BoJ {y}: brak protokołów na {url}")
+        for day, minutes in meetings:
+            if day.year != y:
+                continue
+            text = (plain_text(fetch(minutes, cache)) if minutes.endswith(".htm")
+                    else pdf_first_page(minutes, cache, pages=3))
+            if boj.is_unscheduled(text):
+                log.info("BoJ %d: pomijam nadzwyczajne %s", y, minutes)
+                continue
+            t = boj.adjournment_utc(text, day, minutes)
+            rows.append({"timestamp_utc": t, "currency": "JPY", "name": "BOJ_RATE",
+                         "rank": "HIGH", "source": minutes})
+        planned = sum(1 for r in rows if r["timestamp_utc"].astimezone(boj.TOKYO).year == y)
+        if planned != 8:
+            log.warning("BoJ %d: %d planowych posiedzeń zamiast 8", y, planned)
+    hours = pl.Series([r["timestamp_utc"].astimezone(boj.TOKYO).strftime("%H:%M") for r in rows])
+    log.info("BoJ BOJ_RATE: %d decyzji, koniec posiedzenia (Tokio) %s", len(rows),
+             dict(sorted(hours.value_counts().iter_rows())))
+    return pl.DataFrame(rows, schema=CALENDAR_SCHEMA)
+
+
 SOURCES = {"fomc": build_fomc, "fred": build_fred, "bea": build_bea, "bls": build_bls,
            "census": build_census, "ecb": build_ecb, "boc": build_boc, "statcan": build_statcan,
-           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba, "jp": build_jp}
+           "boe": build_boe, "ons": build_ons, "abs": build_abs, "rba": build_rba, "jp": build_jp, "boj": build_boj}
 
 
 def main() -> int:
