@@ -45,8 +45,13 @@ FROM_DAY_OF_MONTH = 24
 TO_DAY_OF_MONTH = 7
 
 
-def release_url(day: dt.date) -> str:
-    return f"{BASE}/2-{day:%d%m%Y}-ap"
+# Sufiks porządkuje komunikaty wydane tego samego dnia: flash bywa „ap”
+# (29.02.2016) albo „bp” (29.04.2016, gdy wcześniej wyszedł inny komunikat).
+SUFFIXES = ("ap", "bp", "cp")
+
+
+def release_url(day: dt.date, suffix: str = "ap") -> str:
+    return f"{BASE}/2-{day:%d%m%Y}-{suffix}"
 
 
 def candidate_days(start: dt.date, end: dt.date) -> list[dt.date]:
@@ -57,6 +62,23 @@ def candidate_days(start: dt.date, end: dt.date) -> list[dt.date]:
             out.append(day)
         day += dt.timedelta(days=1)
     return out
+
+
+def month_candidates(year: int, month: int) -> list[dt.date]:
+    """Dni sondowane dla miesiąca odniesienia, od najbardziej prawdopodobnego.
+
+    Kolejność ma znaczenie tylko dla liczby zapytań (ec.europa.eu odpowiada
+    429 przy szybkim sondowaniu): najpierw ostatni dzień roboczy miesiąca
+    odniesienia (tak było do ok. 2019), potem początek następnego (tak jest
+    od ok. 2020), na końcu reszta okna. Sondowanie kończy się na pierwszym
+    trafieniu, więc na miesiąc wypada zwykle 1–4 zapytania.
+    """
+    first_next = dt.date(year + month // 12, month % 12 + 1, 1)
+    in_month = [d for d in candidate_days(dt.date(year, month, FROM_DAY_OF_MONTH),
+                                          first_next - dt.timedelta(days=1))]
+    next_month = candidate_days(first_next,
+                                first_next + dt.timedelta(days=TO_DAY_OF_MONTH - 1))
+    return ([in_month[-1]] if in_month else []) + next_month + in_month[-2::-1]
 
 
 def page_title(page_html: str) -> str | None:

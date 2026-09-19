@@ -646,13 +646,26 @@ def fetch_title(url: str, cache: Path, pause: float = PAUSE_S) -> str | None:
 def build_eurostat(years: range) -> pl.DataFrame:
     """HICP flash: data z adresu komunikatu, godzina z calendar_times.yaml."""
     cache = RAW / "eurostat"
-    start = dt.date(years.start, 1, 1) - dt.timedelta(days=8)   # okno sięga poprzedniego miesiąca
-    end = dt.date(years.stop - 1, 12, 31) + dt.timedelta(days=8)
     found: dict[dt.date, str] = {}
-    for day in eurostat.candidate_days(start, end):
-        title = fetch_title(eurostat.release_url(day), cache, pause=EUROSTAT_PAUSE_S)
-        if title and eurostat.is_flash(title):
-            found[day] = title
+    # Miesiące odniesienia: od grudnia roku poprzedzającego zakres (jego flash
+    # bywa publikowany dopiero w styczniu) do grudnia ostatniego roku.
+    months = [(years.start - 1, 12)] + [(y, m) for y in years for m in range(1, 13)]
+    for year, month in months:
+        hit = None
+        for day in eurostat.month_candidates(year, month):
+            for suffix in eurostat.SUFFIXES:
+                url = eurostat.release_url(day, suffix)
+                title = fetch_title(url, cache, pause=EUROSTAT_PAUSE_S)
+                if title and eurostat.is_flash(title):
+                    hit = (day, url)
+                    break
+            if hit:
+                found[hit[0]] = hit[1]
+                break
+        if not hit:
+            if dt.date(year, month, 1) < dt.date.today().replace(day=1):
+                raise RuntimeError(f"Eurostat: brak flash za {year}-{month:02d} "
+                                   "w oknie sondowania")
     try:
         at, tz = release_time(release_times_cfg()["EA_HICP_FLASH"], "EA_HICP_FLASH")
     except PermissionError as e:
@@ -660,7 +673,7 @@ def build_eurostat(years: range) -> pl.DataFrame:
         return pl.DataFrame(schema=CALENDAR_SCHEMA)
     rows = [{"timestamp_utc": dt.datetime.combine(d, at, tzinfo=tz).astimezone(UTC),
              "currency": "EUR", "name": "EA_HICP_FLASH", "rank": "HIGH",
-             "source": eurostat.release_url(d)}
+             "source": found[d]}
             for d in sorted(found) if years.start <= d.year <= years.stop - 1]
     per_year = pl.Series([r["timestamp_utc"].year for r in rows]).value_counts()
     if short := sorted((y, n) for y, n in per_year.iter_rows() if n != 12):
