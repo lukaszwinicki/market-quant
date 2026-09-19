@@ -40,6 +40,13 @@ LUKI
 Jeśli bar otwiera się już za barierą (luka weekendowa, wznowienie po
 przerwie), fill następuje po cenie OTWARCIA, a nie po poziomie bariery.
 Stop nie chroni przez lukę — to jest realna strata ponad zakładane ryzyko.
+
+BARIERA CZASOWA W CZASIE ZAMKNIĘTEGO RYNKU (ADR-026)
+
+Wejście w niedzielę wieczorem + 10 dni roboczych = piątek wieczorem, już
+po zamknięciu. Brak barów przed barierą, bo rynek był zamknięty, to wynik
+ZNANY: wyjście po zamknięciu ostatniego bara. `NO_DATA` zostaje tylko dla
+braków w czasie, gdy rynek powinien działać — awarie mają być widoczne.
 """
 
 from __future__ import annotations
@@ -50,6 +57,8 @@ from enum import Enum
 from typing import Callable
 
 import polars as pl
+
+from ..data.quality import MARKET_HOLIDAYS
 
 UTC = dt.timezone.utc
 
@@ -198,12 +207,57 @@ def _find_exit(side, window, sl, tp, time_barrier, cost, load_ticks):
 
     # --- bariera czasowa ---------------------------------------------------
     last = window.row(-1, named=True)
-    if last["ts"] < time_barrier - dt.timedelta(minutes=1):
+    if (last["ts"] < time_barrier - dt.timedelta(minutes=1)
+            and not market_closed_between(last["ts"] + dt.timedelta(minutes=1), time_barrier)):
         reason = ExitReason.NO_DATA
     else:
         reason = ExitReason.TIME_BARRIER
     close_col = "bid_close" if long else "ask_close"
     return Fill(last["ts"], last[close_col], last["spread_close"]), reason, 0
+
+
+# Najwcześniejszy moment, od którego brak barów w piątek (wigilię, sylwestra)
+# może być zamknięciem, a nie awarią. Piątek: NY 17:00 = 21:00/22:00 UTC,
+# w wigilię i sylwestra rynek kończy wcześniej (NY ~13:00 = 18:00 UTC).
+# Godzina tolerancji na cienki handel przed zamknięciem.
+FRIDAY_TAIL_FROM = dt.time(20, 0)
+EVE_TAIL_FROM = dt.time(17, 0)
+
+
+def _closed_day(d: dt.date) -> bool:
+    return d.weekday() >= 5 or (d.month, d.day) in MARKET_HOLIDAYS
+
+
+def _closes_after(t: dt.datetime) -> bool:
+    """Brak barów od `t` do północy to zamknięcie rynku, nie awaria."""
+    d = t.date()
+    if _closed_day(d):
+        return True
+    nxt = d + dt.timedelta(days=1)
+    if (nxt.month, nxt.day) in MARKET_HOLIDAYS:        # wigilia, sylwester
+        return t.time() >= EVE_TAIL_FROM
+    return d.weekday() == 4 and t.time() >= FRIDAY_TAIL_FROM
+
+
+def market_closed_between(start: dt.datetime, end: dt.datetime) -> bool:
+    """Czy CAŁY przedział [start, end) wypada w zamknięciu rynku.
+
+    Zamknięcie = weekend oraz 25.12 i 1.01, łącznie z ogonem dnia przed
+    nimi (piątek od 20:00 UTC, wigilia i sylwester od 17:00). Kalendarz celowo
+    minimalny — ten sam co w raporcie jakości; każdy inny brak danych
+    jest podejrzany.
+    """
+    first, last = start.date(), end.date()
+    if not _closes_after(start):
+        return False
+    d = first + dt.timedelta(days=1)
+    while d <= last:
+        # Dzień bariery: zamknięty, albo bariera wypada tuż o północy
+        # otwierającej ten dzień (przedział kończy się przed nim).
+        if not _closed_day(d) and not (d == last and end.time() == dt.time(0)):
+            return False
+        d += dt.timedelta(days=1)
+    return True
 
 
 def _stop_fill(side: Side, ts, level: float, spread: float, cost: CostModel) -> Fill:

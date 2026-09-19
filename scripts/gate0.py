@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
+import subprocess
 import sys
 import time
 from dataclasses import asdict
@@ -33,7 +34,7 @@ from src.features.technical import compute_features  # noqa: E402
 from src.harness.market import cost_model_for, load_h1, load_m1  # noqa: E402
 from src.harness.registry import start_run  # noqa: E402
 from src.validation.gate0 import (  # noqa: E402
-    Gate0Result, assess, balanced_counts, contiguous_end, eligible_candidates,
+    Check, Gate0Result, assess, balanced_counts, contiguous_end, eligible_candidates,
     label_spec_from, make_evaluator, run_random_control, spread_profile,
 )
 
@@ -42,6 +43,18 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "v1_baseline.yaml"
 
 log = logging.getLogger("gate0")
+
+# ADR-025 b: jedyne miejsce, gdzie koszt jest rozróżnialny od szumu.
+MARTINGALE_TEST = "tests/test_controls.py::test_random_entries_on_random_walk_lose_exactly_the_cost"
+
+
+def martingale_check() -> Check:
+    """Uruchom test martyngałowy na bieżącym kodzie — dowód w raporcie bramki."""
+    out = subprocess.run([sys.executable, "-m", "pytest", "-q", MARTINGALE_TEST],
+                         cwd=ROOT, capture_output=True, text=True)
+    last = (out.stdout.strip().splitlines() or ["brak wyjścia"])[-1]
+    return Check("b. martyngał (syntetyk): E[R] = −koszt przy koszcie 0,5 R",
+                 out.returncode == 0, f"`{MARTINGALE_TEST.split('::')[1]}`: {last}")
 
 
 def day(s: str) -> dt.datetime:
@@ -90,6 +103,8 @@ def main() -> int:
     with start_run("gate0: random-entry negative test on cohort A", params) as run:
         log.info("run %s: %s, %s → %s", run.run_id, ",".join(symbols),
                  start.date(), end.date())
+        martingale = martingale_check()
+        log.info("martyngał: %s", "OK" if martingale.passed else "NIE PRZESZEDŁ")
         costs = {s: cost_model_for(s, cfg) for s in symbols}
         h1 = {s: b.filter(pl.col("ts") <= end) for s, b in h1.items()}
 
@@ -116,20 +131,24 @@ def main() -> int:
 
         result = assess(labels, costs, spreads, params["block_days"],
                         params["boot_reps"], args.seed)
+        result.checks.insert(1, martingale)
+        n_dropped = sum(v is None for v in evaluate.memo.values())
         quality_ok, quality_reasons = build_report(h1).passes_gate_0()
 
         (run.dir / "gate0.md").write_text(
             render(run.run_id, params, result, spreads, quality_ok, quality_reasons,
-                   len(evaluate.memo)), encoding="utf-8")
+                   len(evaluate.memo), n_dropped), encoding="utf-8")
 
         passed = result.passed and quality_ok
         run.record(
             passed=passed, data_quality_passed=quality_ok,
-            gross_r=result.gross.expectancy, gross_ci=[result.gross.ci_low, result.gross.ci_high],
+            pre_cost_r=result.pre_cost.expectancy,
+            pre_cost_ci=[result.pre_cost.ci_low, result.pre_cost.ci_high],
+            half_ci=result.half_ci,
             net_r=result.net.expectancy, net_ci=[result.net.ci_low, result.net.ci_high],
             mean_cost_r=result.mean_cost_r, resolution=result.resolution,
-            n_trades=result.gross.n_trades, n_unique_trades=len(evaluate.memo),
-            n_days=result.gross.n_days,
+            n_trades=result.pre_cost.n_trades, n_unique_trades=len(evaluate.memo),
+            n_unique_dropped=n_dropped, n_days=result.pre_cost.n_days,
             checks={c.name: c.passed for c in result.checks},
         )
         print((run.dir / "gate0.md").read_text(encoding="utf-8"))
@@ -137,19 +156,21 @@ def main() -> int:
 
 
 def render(run_id: str, params: dict, res: Gate0Result, spreads: dict[str, dict],
-           quality_ok: bool, quality_reasons: list[str], n_unique: int) -> str:
+           quality_ok: bool, quality_reasons: list[str], n_unique: int,
+           n_dropped: int) -> str:
     ok = res.passed and quality_ok
-    g, n = res.gross, res.net
+    g, n = res.pre_cost, res.net
     lines = [
         "# Bramka 0 — test negatywny (losowe wejścia)",
         "",
         f"> Run: `{run_id}` · {params['start']:%Y-%m-%d} → {params['end']:%Y-%m-%d} · "
         f"{', '.join(params['symbols'])}",
         f"> {params['reps']} powtórzeń × {params['n_per_side']} wejść na (para, kierunek); "
-        f"{g.n_trades} transakcji, {n_unique} unikalnych, {g.n_days} dni roboczych",
+        f"{g.n_trades} transakcji, {n_unique} unikalnych ({n_dropped} bez wyniku: "
+        f"NO_DATA lub brak danych w chwili decyzji), {g.n_days} dni roboczych",
         f"> Werdykt: **{'PRZECHODZI' if ok else 'NIE PRZECHODZI'}**",
         "",
-        "## Kryteria",
+        "## Kryteria (ADR-025)",
         "",
         "| Kryterium | Wynik | Szczegóły |",
         "|---|---|---|",
@@ -168,23 +189,23 @@ def render(run_id: str, params: dict, res: Gate0Result, spreads: dict[str, dict]
         "| | E[R] | CI95 | SE |",
         "|---|---|---|---|",
         f"| netto (R) | {n.expectancy:+.4f} | [{n.ci_low:+.4f}, {n.ci_high:+.4f}] | {n.se:.4f} |",
-        f"| brutto (R + koszt) | {g.expectancy:+.4f} | [{g.ci_low:+.4f}, {g.ci_high:+.4f}] | {g.se:.4f} |",
+        f"| przed kosztem (R + koszt) | {g.expectancy:+.4f} | [{g.ci_low:+.4f}, {g.ci_high:+.4f}] | {g.se:.4f} |",
         f"| koszt | {res.mean_cost_r:.4f} | | |",
         "",
-        f"**Rozdzielczość:** połowa CI brutto = {res.resolution:.1f}× średni koszt. "
-        + ("Test NIE odróżnia kosztu policzonego od pominiętego — to rozstrzyga test "
-           "martyngałowy na syntetyku i sprawdzenie podłogi per transakcja."
+        f"**Rozdzielczość:** połowa CI przed kosztem = {res.resolution:.1f}× średni koszt. "
+        + ("Część c NIE odróżnia kosztu policzonego od pominiętego — to rozstrzygają "
+           "części a i b."
            if res.resolution >= 1 else
            "Test odróżnia koszt policzony od pominiętego."),
         "",
         "## Per para i kierunek",
         "",
-        "| Para | Kierunek | n | E[R] | koszt | brutto | trafienia TP | luki |",
+        "| Para | Kierunek | n | E[R] | koszt | przed kosztem | trafienia TP | luki |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for r in res.breakdown.iter_rows(named=True):
         lines.append(f"| {r['symbol']} | {r['side']} | {r['n']} | {r['mean_r']:+.4f} | "
-                     f"{r['mean_cost_r']:.4f} | {r['mean_gross_r']:+.4f} | "
+                     f"{r['mean_cost_r']:.4f} | {r['mean_pre_cost_r']:+.4f} | "
                      f"{r['hit_rate']:.3f} | {r['gap_share']:.3f} |")
     lines += [
         "",

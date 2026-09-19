@@ -112,7 +112,7 @@ Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
 w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
 do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (176 testów):
+Gotowe (194 testy):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -146,11 +146,19 @@ Gotowe (176 testów):
   symulatorowi tylko okno [decyzja, bariera czasowa]
 - `src/validation/gate0.py` + `scripts/gate0.py` — bramka 0 na harnessie:
   losowe wejścia zrównoważone long/short per para, memo transakcji
-  (deterministyczne w (symbol, ts, kierunek)), kryteria: CI brutto
-  (R + koszt) ∋ 0, podłoga per transakcja, spread z ticków, raport luk H1.
-  Wynik w `runs/<id>/gate0.md` + `labels.parquet`
+  (deterministyczne w (symbol, ts, kierunek)). Kryteria wg ADR-025:
+  a) rachunek kosztu per transakcja (`cost_r = max(spread_r, podłoga)`,
+  `r = gross_r − dopłata`; etykiety niosą `gross_r`, `spread_r`),
+  b) test martyngałowy uruchamiany przez skrypt, c) CI95 przed kosztem
+  ∋ 0 i połowa CI ≤ 0,05 R (szerszy = NIEROZSTRZYGNIĘTE). Plus spread
+  z ticków i raport luk H1. Wynik w `runs/<id>/gate0.md` + `labels.parquet`
+- Symulator, ADR-026: bariera czasowa w czasie zamkniętego rynku →
+  `TIME_BARRIER` po ostatnim barze (`market_closed_between`). Zamknięcie:
+  weekend, 25.12, 1.01; ogon dnia przed nim tylko od 20:00 UTC w piątek
+  i od 17:00 w wigilię/sylwestra — wcześniejsze urwanie danych to awaria
+  (`NO_DATA`). Progi godzinowe to doprecyzowanie implementacyjne ADR-026
 
-Bramka 0 — pierwszy przebieg (`20260919T134506Z-c4710e`, pierwszy wpis
+Bramka 0 — pierwszy przebieg, NIEAKTUALNY po ADR-026 (`20260919T134506Z-c4710e`, pierwszy wpis
 w `trials.jsonl`, drzewo brudne → `diff.patch`): 2015-01 → 2016-04-28,
 6 par, 20 × 100 wejść na (para, kierunek), 23 719 transakcji, 11 min.
 PRZECHODZI: netto −0,0010 R [−0,037; +0,034], brutto +0,0096 R
@@ -166,12 +174,6 @@ Do rozstrzygnięcia przez użytkownika (ADR przed bramką 2):
 - Spec §10.1: 6/2 daje 15 **podziałów**, ale 5 **ścieżek**, nie 15.
 - PBO wymaga ≥ 2 wariantów — siatka wrażliwości wokół {55, 2.0, 4.0}
   musi zostać prerejestrowana przed pierwszym uruchomieniem.
-- Operacjonalizacja „E[R] ≈ −koszt" z zamrożonego `gates.gate_0`:
-  przyjęto „CI95 brutto zawiera 0" — wymaga ADR.
-- Wejścia w niedzielę 21–23 UTC (~1,2%) znikają: bariera czasowa +10 dni
-  rob. wypada po piątkowym zamknięciu (20:59/21:59) → NO_DATA. Strategia
-  straci wszystkie wejścia z otwarcia tygodnia. Propozycja: wyjście po
-  ostatniej dostępnej cenie przed barierą. Zmiana symulatora → ADR.
 
 Ustalenia z danych:
 - Rozgrzewka: `vol_pct_252` wymaga 252 dni → pierwszy handlowalny bar
@@ -193,6 +195,10 @@ Ustalenia z danych:
 - Do decyzji (ADR): czy przebiegi kontroli/infrastruktury liczą się
   do N w DSR. Rejestr zapisuje `purpose`, `n_trials()` liczy wszystko.
 
-Następne: ADR-y dla dwóch punktów bramki 0 powyżej (≈ i NO_DATA
-w weekend); po pobraniu 2015–2021 powtórka `scripts/gate0.py` (kolejna
-próba). Potem bramka 1: rozkład zerowy dla sygnału V1a.
+Następne (gdy pobieranie dojdzie do końca 2021): `download_ticks.py
+--retry-failed`, `build_bars.py`, potem `scripts/gate0.py` — przebieg
+zamykający bramkę 0 (nowy symulator, kryteria ADR-025; kolejna próba
+w `trials.jsonl`). Sprawdzić w raporcie: liczbę „bez wyniku" (po ADR-026
+powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Ok. 32 ms na
+unikalną transakcję — przy 7 latach rozważyć wektoryzację `_find_exit`.
+Potem bramka 1: rozkład zerowy dla sygnału V1a.

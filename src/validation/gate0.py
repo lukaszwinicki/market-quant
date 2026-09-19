@@ -6,8 +6,13 @@ strategia. Pod H₀ taka „strategia" nie ma przewagi, więc:
     E[R]            ≈ −E[koszt_R]
     E[R + koszt_R]  ≈ 0           (wynik brutto — przed kosztem)
 
-Test sprawdza drugą równość: przedział bootstrapowy wyniku brutto musi
-zawierać zero. Dodatnie brutto na losowych wejściach oznacza, że symulator
+Kryterium według ADR-025, trzy części:
+
+    a. rachunek kosztu per transakcja — `cost_accounting_violations`
+    b. test martyngałowy na syntetyku — uruchamiany przez skrypt
+    c. CI95 wyniku przed kosztem ∋ 0 ORAZ połowa CI ≤ 0,05 R
+
+Część c sprawdza drugą równość powyżej. Dodatnie brutto na losowych wejściach oznacza, że symulator
 widzi przyszłość albo kolejność barier jest rozstrzygana na korzyść.
 Ujemne — że koszt jest pobierany gdzieś jeszcze poza `cost` (np. drugi raz
 w cenach fillów).
@@ -23,8 +28,8 @@ z kilku lat danych jest rzędu ±0,05 R. Na prawdziwych danych test
 do tego służy test martyngałowy na syntetyku
 (`tests/test_controls.py`), gdzie odpowiedź jest znana. Tu mierzymy tę
 rozdzielczość jawnie (`resolution`) i raportujemy, zamiast udawać, że
-równość została potwierdzona. Dlatego stosowanie podłogi kosztu jest
-sprawdzane wprost, transakcja po transakcji, a nie przez średnią.
+równość została potwierdzona. Dlatego rachunek kosztu jest sprawdzany
+wprost, transakcja po transakcji, a nie przez średnią.
 
 ZRÓWNOWAŻENIE KIERUNKÓW
 
@@ -46,6 +51,11 @@ from ..labels.triple_barrier import LabelSpec, add_business_days, label_events
 from .bootstrap import BootstrapResult, block_bootstrap_expectancy
 from .controls import Counts, candidate_events, random_entries
 
+# ADR-025 c: szerszy CI to „nierozstrzygnięte", nie „przechodzi".
+# Połowa progu bramki 2 (0,10 R).
+MAX_HALF_CI_R = 0.05
+# Tolerancja numeryczna tożsamości kosztu (w R).
+ACCOUNTING_TOL_R = 1e-9
 # Przerwa w danych dłuższa niż weekend ze świętem: koniec ciągłego pokrycia.
 MAX_CONTIGUOUS_GAP = dt.timedelta(days=5)
 # Spread „z ticków" ma rozkład, nie jedną wartość. Kilka różnych wartości
@@ -142,20 +152,28 @@ def run_random_control(candidates: pl.DataFrame, counts: Counts,
 
 # --- ocena ------------------------------------------------------------------
 
-def floor_violations(labels: pl.DataFrame, costs: dict[str, CostModel]) -> pl.DataFrame:
-    """Transakcje, których efektywny koszt jest poniżej podłogi (ADR-024).
+def cost_accounting_violations(labels: pl.DataFrame,
+                               costs: dict[str, CostModel]) -> pl.DataFrame:
+    """Transakcje łamiące rachunek kosztu (ADR-024, ADR-025 a).
 
-    koszt = cost_r × ryzyko, ryzyko = |fill wejścia − SL| — ten sam
-    mianownik, którym symulator liczy R.
+        cost_r = max(spread_r, podłoga / ryzyko)
+        r      = gross_r − (cost_r − spread_r)     — spread tylko raz
+
+    ryzyko = |fill wejścia − SL| — ten sam mianownik, którym symulator
+    liczy R. Symbol bez modelu kosztów też jest naruszeniem.
     """
     floors = pl.DataFrame({"symbol": list(costs),
                            "floor": [c.floor for c in costs.values()]})
+    floor_r = pl.col("floor") / (pl.col("entry_price") - pl.col("sl")).abs()
+    tol = ACCOUNTING_TOL_R
     return (
         labels.join(floors, on="symbol", how="left")
-        .with_columns((pl.col("cost_r") * (pl.col("entry_price") - pl.col("sl")).abs())
-                      .alias("cost_px"))
-        .filter(pl.col("floor").is_null()
-                | (pl.col("cost_px") < pl.col("floor") * (1 - 1e-9)))
+        .filter(
+            pl.col("floor").is_null()
+            | ((pl.col("cost_r") - pl.max_horizontal("spread_r", floor_r)).abs() > tol)
+            | ((pl.col("r") - (pl.col("gross_r") - pl.col("cost_r") + pl.col("spread_r")))
+               .abs() > tol)
+        )
     )
 
 
@@ -183,10 +201,11 @@ class Check:
 
 @dataclass
 class Gate0Result:
-    gross: BootstrapResult           # R + koszt_R: pod H₀ zero
+    pre_cost: BootstrapResult        # R + koszt_R: pod H₀ zero
     net: BootstrapResult             # R: pod H₀ −koszt
     mean_cost_r: float
-    resolution: float                # połowa CI brutto / średni koszt
+    half_ci: float                   # połowa CI95 wyniku przed kosztem
+    resolution: float                # half_ci / średni koszt
     breakdown: pl.DataFrame          # per (symbol, kierunek)
     checks: list[Check] = field(default_factory=list)
 
@@ -197,12 +216,12 @@ class Gate0Result:
 
 def breakdown(labels: pl.DataFrame) -> pl.DataFrame:
     return (
-        labels.with_columns((pl.col("r") + pl.col("cost_r")).alias("gross_r"))
+        labels.with_columns((pl.col("r") + pl.col("cost_r")).alias("pre_cost_r"))
         .group_by("symbol", "side")
         .agg(pl.len().alias("n"),
              pl.col("r").mean().alias("mean_r"),
              pl.col("cost_r").mean().alias("mean_cost_r"),
-             pl.col("gross_r").mean().alias("mean_gross_r"),
+             pl.col("pre_cost_r").mean().alias("mean_pre_cost_r"),
              pl.col("y").mean().alias("hit_rate"),
              (pl.col("reason").is_in(["gap_sl", "gap_tp"])).mean().alias("gap_share"))
         .sort("symbol", "side")
@@ -217,25 +236,30 @@ def assess(labels: pl.DataFrame, costs: dict[str, CostModel],
     Luki w danych (drugie kryterium bramki) ocenia raport jakości —
     patrz `QualityReport.passes_gate_0`, dołączany przez skrypt.
     """
-    lab = labels.with_columns((pl.col("r") + pl.col("cost_r")).alias("gross_r"))
-    gross = block_bootstrap_expectancy(lab, block_days, n_boot, seed, value="gross_r")
+    lab = labels.with_columns((pl.col("r") + pl.col("cost_r")).alias("pre_cost_r"))
+    pre = block_bootstrap_expectancy(lab, block_days, n_boot, seed, value="pre_cost_r")
     net = block_bootstrap_expectancy(lab, block_days, n_boot, seed, value="r")
     mean_cost = float(lab["cost_r"].mean())
-    half = (gross.ci_high - gross.ci_low) / 2
+    half = (pre.ci_high - pre.ci_low) / 2
 
-    checks = [
-        Check("losowe wejścia: brutto ≈ 0 (E[R] ≈ −koszt)",
-              gross.ci_low <= 0.0 <= gross.ci_high,
-              f"brutto {gross.expectancy:+.4f} R, CI95 [{gross.ci_low:+.4f}, "
-              f"{gross.ci_high:+.4f}]; netto {net.expectancy:+.4f} R vs "
-              f"−koszt {-mean_cost:+.4f} R"),
-    ]
-
-    bad = floor_violations(lab, costs)
-    checks.append(Check(
-        "podłoga min_roundturn_cost_pips stosowana",
+    bad = cost_accounting_violations(lab, costs)
+    checks = [Check(
+        "a. rachunek kosztu per transakcja (podłoga, spread raz)",
         bad.is_empty(),
-        f"{bad.height} z {lab.height} transakcji poniżej podłogi"))
+        f"{bad.height} z {lab.height} transakcji łamie cost = max(spread, podłoga) "
+        "lub r = gross − dopłata")]
+
+    covers = pre.ci_low <= 0.0 <= pre.ci_high
+    narrow = half <= MAX_HALF_CI_R
+    verdict = ("" if covers and narrow else
+               " — NIEROZSTRZYGNIĘTE: CI za szeroki, potrzeba więcej danych" if covers else
+               " — bias wyniku przed kosztem")
+    checks.append(Check(
+        f"c. losowe wejścia: CI95 przed kosztem ∋ 0, połowa CI ≤ {MAX_HALF_CI_R} R",
+        covers and narrow,
+        f"przed kosztem {pre.expectancy:+.4f} R, CI95 [{pre.ci_low:+.4f}, "
+        f"{pre.ci_high:+.4f}], połowa {half:.4f} R; netto {net.expectancy:+.4f} R "
+        f"vs −koszt {-mean_cost:+.4f} R{verdict}"))
 
     wrong = [f"{s}: {p['distinct']} różnych wartości, {p['negative']} < 0, "
              f"{p['crossed_bars']} barów ask_low < bid_low"
@@ -247,6 +271,6 @@ def assess(labels: pl.DataFrame, costs: dict[str, CostModel],
         "; ".join(wrong) if wrong else
         "wszystkie pary: spread nieujemny i zmienny, ask ≥ bid"))
 
-    return Gate0Result(gross=gross, net=net, mean_cost_r=mean_cost,
+    return Gate0Result(pre_cost=pre, net=net, mean_cost_r=mean_cost, half_ci=half,
                        resolution=half / mean_cost if mean_cost > 0 else float("inf"),
                        breakdown=breakdown(lab), checks=checks)

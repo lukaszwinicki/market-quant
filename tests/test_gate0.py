@@ -10,8 +10,8 @@ from src.labels import triple_barrier
 from src.labels.triple_barrier import LabelSpec, add_business_days, label_events
 from src.validation.controls import candidate_events, random_control
 from src.validation.gate0 import (
-    assess, balanced_counts, contiguous_end, eligible_candidates, floor_violations,
-    make_evaluator, run_random_control, spread_profile,
+    assess, balanced_counts, contiguous_end, cost_accounting_violations,
+    eligible_candidates, make_evaluator, run_random_control, spread_profile,
 )
 from tests.test_controls import _random_walk_m1
 
@@ -102,23 +102,32 @@ def test_rep_means_equal_random_control(walk):
     assert labels.height == 4 * 10
 
 
-# --- kryteria -----------------------------------------------------------------
+# --- kryteria (ADR-025) --------------------------------------------------------
 
-def fake_labels(n_days=200, per_day=6, bias=0.0, seed=0) -> pl.DataFrame:
-    """Transakcje o znanym rozkładzie: brutto ~ N(bias, 1), koszt 0.02 R."""
+RISK = 50 * PIP
+
+
+def fake_labels(n_days=200, per_day=6, bias=0.0, sd=0.5, seed=0) -> pl.DataFrame:
+    """Transakcje o znanym rozkładzie i spójnym rachunku kosztu.
+
+    Wynik przed kosztem ~ N(bias, sd); spread 0,3 pipsa = 0,006 R,
+    podłoga 1,5 pipsa = 0,03 R wiąże, więc koszt = 0,03 R.
+    """
     rng = np.random.default_rng(seed)
     days = [T0 + dt.timedelta(days=d) for d in range(n_days * 7 // 5 + 7)]
     days = [d for d in days if d.weekday() < 5][:n_days]
     ts = [d + dt.timedelta(hours=h) for d in days for h in range(per_day)]
     n = len(ts)
-    risk = 50 * PIP                                       # koszt 1 pips = 0.02 R
-    cost_r = np.full(n, 1.0 * PIP / risk) + 0.5 * PIP / risk   # 1.5 pipsa = podłoga
-    gross = rng.standard_normal(n) + bias
+    spread_r = np.full(n, 0.3 * PIP / RISK)
+    cost_r = np.maximum(spread_r, COST.floor / RISK)
+    pre = rng.standard_normal(n) * sd + bias
+    gross_r = pre - spread_r                       # fille już po spreadzie
     return pl.DataFrame({
         "ts": pl.Series(ts, dtype=pl.Datetime("ms", "UTC")),
         "symbol": ["EURUSD"] * n, "side": ["long", "short"] * (n // 2),
-        "r": gross - cost_r, "cost_r": cost_r, "y": (gross > 1).astype(int),
-        "reason": ["sl"] * n, "entry_price": np.full(n, 1.1), "sl": np.full(n, 1.1 - risk),
+        "r": gross_r - (cost_r - spread_r), "cost_r": cost_r,
+        "gross_r": gross_r, "spread_r": spread_r, "y": (pre > 1).astype(int),
+        "reason": ["sl"] * n, "entry_price": np.full(n, 1.1), "sl": np.full(n, 1.1 - RISK),
     })
 
 
@@ -126,49 +135,70 @@ def spreads_ok():
     return {"EURUSD": {"distinct": 500, "negative": 0, "crossed_bars": 0}}
 
 
+def check(res, prefix):
+    return next(c for c in res.checks if c.name.startswith(prefix))
+
+
 def test_unbiased_random_entries_pass():
     res = assess(fake_labels(), {"EURUSD": COST}, spreads_ok(), 20, 2000, 0)
     assert res.passed, [c for c in res.checks if not c.passed]
     assert res.mean_cost_r == pytest.approx(0.03)
-    assert res.net.expectancy == pytest.approx(res.gross.expectancy - 0.03)
+    assert res.net.expectancy == pytest.approx(res.pre_cost.expectancy - 0.03)
 
 
-def test_positive_gross_on_random_entries_fails():
+def test_positive_pre_cost_result_on_random_entries_fails():
     """Symulator zerkający w przyszłość daje zysk z losowych wejść."""
     res = assess(fake_labels(bias=0.3), {"EURUSD": COST}, spreads_ok(), 20, 2000, 0)
-    assert not res.checks[0].passed
+    c = check(res, "c.")
+    assert not c.passed and "bias" in c.detail
     assert not res.passed
+
+
+def test_wide_ci_is_inconclusive_not_a_pass():
+    """Mało danych → szeroki CI zawiera 0 zawsze. To nie jest przejście."""
+    res = assess(fake_labels(n_days=60, per_day=2, sd=1.0), {"EURUSD": COST},
+                 spreads_ok(), 20, 2000, 0)
+    c = check(res, "c.")
+    assert res.pre_cost.ci_low <= 0 <= res.pre_cost.ci_high
+    assert res.half_ci > 0.05
+    assert not c.passed and "NIEROZSTRZYGNIĘTE" in c.detail
 
 
 def test_cost_below_floor_is_caught_per_trade():
-    lab = fake_labels()
-    lab = lab.with_columns(pl.when(pl.int_range(pl.len()) == 7)
-                           .then(pl.col("cost_r") * 0.5).otherwise(pl.col("cost_r"))
-                           .alias("cost_r"))
-    assert floor_violations(lab, {"EURUSD": COST}).height == 1
+    lab = fake_labels().with_columns(
+        pl.when(pl.int_range(pl.len()) == 7).then(pl.col("cost_r") * 0.5)
+        .otherwise(pl.col("cost_r")).alias("cost_r"))
+    assert cost_accounting_violations(lab, {"EURUSD": COST}).height == 1
     res = assess(lab, {"EURUSD": COST}, spreads_ok(), 20, 2000, 0)
-    assert not res.passed
+    assert not check(res, "a.").passed
 
 
-def test_jpy_floor_uses_jpy_pip():
+def test_spread_charged_twice_is_caught_per_trade():
+    """Błąd naprawiony wcześniej w symulatorze: spread w fillach i drugi raz w r."""
+    lab = fake_labels()
+    twice = lab.with_columns((pl.col("r") - pl.col("spread_r")).alias("r"))
+    assert cost_accounting_violations(twice, {"EURUSD": COST}).height == lab.height
+    assert cost_accounting_violations(lab, {"EURUSD": COST}).is_empty()
+
+
+def test_jpy_floor_uses_jpy_pip_and_unknown_symbol_is_a_violation():
     lab = fake_labels(n_days=5).with_columns(pl.lit("EURJPY").alias("symbol"))
     jpy = CostModel(pip=0.01, min_roundturn_pips=2.5)
-    assert floor_violations(lab, {"EURJPY": jpy}).height == lab.height
-    assert floor_violations(lab, {"EURUSD": COST}).height == lab.height   # brak modelu
+    assert cost_accounting_violations(lab, {"EURJPY": jpy}).height == lab.height
+    assert cost_accounting_violations(lab, {"EURUSD": COST}).height == lab.height
 
 
-def test_resolution_reports_whether_cost_is_detectable():
+def test_resolution_is_half_ci_over_cost():
     res = assess(fake_labels(), {"EURUSD": COST}, spreads_ok(), 20, 2000, 0)
-    half = (res.gross.ci_high - res.gross.ci_low) / 2
-    assert res.resolution == pytest.approx(half / 0.03)
-    assert res.resolution > 1          # 1200 transakcji ~N(0,1) nie widzi 0.03 R
+    assert res.half_ci == pytest.approx((res.pre_cost.ci_high - res.pre_cost.ci_low) / 2)
+    assert res.resolution == pytest.approx(res.half_ci / 0.03)
 
 
 def test_constant_or_negative_spread_fails(walk):
     const = spread_profile(walk, PIP)                  # syntetyk ma spread stały
     assert const["distinct"] == 1
     res = assess(fake_labels(), {"EURUSD": COST}, {"EURUSD": const}, 20, 2000, 0)
-    assert not res.checks[2].passed
+    assert not check(res, "spread").passed
 
     noisy = walk.with_columns(
         (pl.col("spread_close") * (1 + pl.int_range(pl.len()) % 50 / 10)).alias("spread_close"))
@@ -177,4 +207,15 @@ def test_constant_or_negative_spread_fails(walk):
                              .otherwise(pl.col("spread_close")).alias("spread_close"))
     res = assess(fake_labels(), {"EURUSD": COST}, {"EURUSD": spread_profile(neg, PIP)},
                  20, 2000, 0)
-    assert not res.checks[2].passed
+    assert not check(res, "spread").passed
+
+
+def test_real_simulator_labels_satisfy_cost_accounting(walk):
+    """Tożsamość kosztu na etykietach z prawdziwego symulatora, nie z fake'a."""
+    spec = LabelSpec(horizon_business_days=1)
+    cands = eligible_candidates(hourly(24 * 20), "EURUSD", T0, walk["ts"][-1], spec)
+    cost = CostModel(pip=PIP, min_roundturn_pips=1.5)
+    evaluate = make_evaluator({"EURUSD": walk}, {"EURUSD": cost}, spec)
+    lab = run_random_control(cands, balanced_counts(["EURUSD"], 10), evaluate, 2, seed=1)
+    assert lab.height == 40
+    assert cost_accounting_violations(lab, {"EURUSD": cost}).is_empty()

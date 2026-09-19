@@ -191,6 +191,79 @@ def test_missing_data_is_flagged_not_silently_treated_as_time_exit():
     assert res.reason is ExitReason.NO_DATA
 
 
+def at(t: dt.datetime) -> int:
+    """Minuty od T0 — dla helpera `m1`."""
+    return int((t - T0).total_seconds() // 60)
+
+
+def test_sunday_entry_with_barrier_after_friday_close_is_a_time_exit():
+    """ADR-026: niedziela 22:00 + 10 dni rob. = piątek 22:00; latem ostatni
+    bar tygodnia to 20:59, więc rynek jest już zamknięty."""
+    from src.labels.triple_barrier import add_business_days
+    sun = dt.datetime(2020, 7, 5, 22, 0, tzinfo=UTC)
+    tb = add_business_days(sun, 10)
+    assert tb == dt.datetime(2020, 7, 17, 22, 0, tzinfo=UTC)
+    fri_close = dt.datetime(2020, 7, 17, 20, 59, tzinfo=UTC)
+    last = dict(bid_o=1.1010, bid_h=1.1010, bid_l=1.1010, bid_c=1.1010, spread=5 * PIP)
+    bars = m1([{"min": at(sun), **FLAT}, {"min": at(sun) + 1, **FLAT},
+               {"min": at(fri_close) - 1, **FLAT}, {"min": at(fri_close), **last}])
+    res = simulate_trade(Side.LONG, sun, sl=1.0900, tp=1.1100,
+                         time_barrier=tb, m1=bars, cost=NO_FLOOR)
+    assert res.reason is ExitReason.TIME_BARRIER
+    assert res.exit.time == fri_close
+    assert res.exit.price == pytest.approx(1.1010)
+    assert res.exit.spread == pytest.approx(5 * PIP)
+
+
+def test_short_time_exit_after_close_uses_ask():
+    fri_close = dt.datetime(2020, 1, 3, 20, 59, tzinfo=UTC)
+    bars = m1([{"min": 0, **FLAT}, {"min": at(fri_close), **FLAT}])
+    res = simulate_trade(Side.SHORT, T0, sl=1.1100, tp=1.0900,
+                         time_barrier=dt.datetime(2020, 1, 3, 22, 0, tzinfo=UTC),
+                         m1=bars, cost=NO_FLOOR)
+    assert res.reason is ExitReason.TIME_BARRIER
+    assert res.exit.price == pytest.approx(1.1000 + 2 * PIP)
+
+
+def test_friday_outage_before_close_is_still_no_data():
+    """Dane urwane w piątek o 10:00 to awaria, nie weekend."""
+    bars = m1([{"min": 0, **FLAT}, {"min": at(dt.datetime(2020, 1, 3, 10, tzinfo=UTC)), **FLAT}])
+    res = simulate_trade(Side.LONG, T0, sl=1.0900, tp=1.1100,
+                         time_barrier=dt.datetime(2020, 1, 3, 22, 0, tzinfo=UTC),
+                         m1=bars, cost=NO_FLOOR)
+    assert res.reason is ExitReason.NO_DATA
+
+
+def test_missing_monday_after_weekend_is_no_data():
+    fri_close = dt.datetime(2020, 1, 3, 20, 59, tzinfo=UTC)
+    bars = m1([{"min": 0, **FLAT}, {"min": at(fri_close), **FLAT}])
+    res = simulate_trade(Side.LONG, T0, sl=1.0900, tp=1.1100,
+                         time_barrier=dt.datetime(2020, 1, 6, 10, 0, tzinfo=UTC),
+                         m1=bars, cost=NO_FLOOR)
+    assert res.reason is ExitReason.NO_DATA
+
+
+@pytest.mark.parametrize("start, end, closed", [
+    # weekend
+    ((2020, 1, 3, 21, 0), (2020, 1, 5, 21, 0), True),
+    ((2020, 1, 3, 21, 0), (2020, 1, 3, 22, 0), True),
+    ((2020, 1, 3, 12, 0), (2020, 1, 3, 22, 0), False),      # piątek w sesji
+    ((2020, 1, 3, 21, 0), (2020, 1, 6, 9, 0), False),       # poniedziałek rano
+    ((2020, 1, 3, 21, 0), (2020, 1, 6, 0, 0), True),        # do północy niedziela/pon.
+    ((2020, 1, 1, 23, 0), (2020, 1, 2, 1, 0), False),       # czwartek w nocy
+    # święta
+    ((2020, 12, 24, 18, 0), (2020, 12, 25, 22, 0), True),   # wigilia (czw.) → 25.12
+    ((2020, 12, 24, 10, 0), (2020, 12, 25, 22, 0), False),  # wigilia rano to sesja
+    ((2020, 12, 24, 18, 0), (2020, 12, 28, 10, 0), False),  # poniedziałek 28.12 handlowy
+    ((2021, 12, 24, 18, 0), (2021, 12, 26, 12, 0), True),   # wigilia w piątek
+    ((2020, 12, 31, 18, 0), (2021, 1, 1, 23, 0), True),     # sylwester → 1.01
+])
+def test_market_closed_between(start, end, closed):
+    from src.execution.simulator import market_closed_between
+    assert market_closed_between(dt.datetime(*start, tzinfo=UTC),
+                                 dt.datetime(*end, tzinfo=UTC)) is closed
+
+
 def test_no_data_at_decision_time_returns_none():
     bars = m1([{"min": 30, **FLAT}])
     assert simulate_trade(Side.LONG, T0, sl=1.09, tp=1.11,

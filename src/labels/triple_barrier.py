@@ -151,6 +151,10 @@ def label_events(
             "entry_price": res.entry.price,
             "exit_price": res.exit.price,
             "cost_r": res.cost / res.risk,
+            # Składniki do kontroli rachunku kosztu (ADR-025 a):
+            # r = gross_r − (cost_r − spread_r), cost_r = max(spread_r, podłoga_R)
+            "gross_r": res.gross / res.risk,
+            "spread_r": 0.5 * (res.entry.spread + res.exit.spread) / res.risk,
         })
 
     return pl.DataFrame(rows) if rows else _empty_labels(events)
@@ -163,6 +167,7 @@ def _empty_labels(events: pl.DataFrame) -> pl.DataFrame:
         "side": pl.Utf8, "t1": pl.Datetime("ms", "UTC"), "y": pl.Int64,
         "r": pl.Float64, "reason": pl.Utf8, "sl": pl.Float64, "tp": pl.Float64,
         "entry_price": pl.Float64, "exit_price": pl.Float64, "cost_r": pl.Float64,
+        "gross_r": pl.Float64, "spread_r": pl.Float64,
     })
 
 
