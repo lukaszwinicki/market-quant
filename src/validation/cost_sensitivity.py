@@ -25,11 +25,16 @@ Dla k = 1 daje to `gross_r − (cost_r − spread_r)`, czyli dokładnie `r`
 zapisane przez symulator — i to jest sprawdzane testem, bo pomyłka w tym
 miejscu raz już się zdarzyła (spread liczony dwa razy, ADR-024).
 
-CZEGO MNOŻNIK NIE OBEJMUJE
+FINANSOWANIE
 
-Finansowania (swap). Jest liczone osobno, od liczby dni trzymania, i ma
-własny mnożnik — patrz `execution/financing.py`. Mnożenie go razem ze
-spreadem sugerowałoby, że oba rosną z tego samego powodu; nie rosną.
+Swap nie skaluje się mnożnikiem: rośnie z liczby dni trzymania i z różnicy
+stóp, a nie z warunków brokera na spreadzie. Mnożenie go razem ze spreadem
+sugerowałoby, że oba mają tę samą przyczynę.
+
+Jest natomiast ODEJMOWANE w każdym scenariuszu, jeżeli etykiety niosą
+kolumnę `financing_r` (dokłada ją `execution/financing.py`). Bez tego
+`r(1)` przestałoby się zgadzać z `r` po korekcie o swap i drabinka
+raportowałaby wynik lepszy niż faktyczny.
 """
 
 from __future__ import annotations
@@ -59,8 +64,12 @@ def repriced(labels: pl.DataFrame, multiplier: float) -> pl.Series:
         raise ValueError(f"etykiety bez składników kosztu: {missing}")
     modelled = pl.col("cost_r") + pl.col("slip_r")
     embedded = pl.col("spread_r") + pl.col("slip_r")
+    # Swap nie skaluje się mnożnikiem, ale musi zostać odjęty — inaczej
+    # r(1) rozjechałoby się z `r` po korekcie o finansowanie.
+    financing = (pl.col("financing_r") if "financing_r" in labels.columns
+                 else pl.lit(0.0))
     return labels.select(
-        (pl.col("gross_r") - (multiplier * modelled - embedded)).alias("r")
+        (pl.col("gross_r") - (multiplier * modelled - embedded) - financing).alias("r")
     )["r"]
 
 
@@ -68,6 +77,8 @@ def scenario(labels: pl.DataFrame, multiplier: float) -> CostScenario:
     r = repriced(labels, multiplier)
     mean = float(r.mean())
     cost = float((labels["cost_r"] + labels["slip_r"]).mean()) * multiplier
+    if "financing_r" in labels.columns:
+        cost += float(labels["financing_r"].mean())
     return CostScenario(multiplier=multiplier, expectancy=mean, total_cost_r=cost,
                         n_trades=labels.height, positive=mean > 0)
 

@@ -569,6 +569,64 @@ Każdy inny brak danych przed barierą pozostaje `NO_DATA`, żeby awarie feedu n
 
 ---
 
+## ADR-035 — Finansowanie kohorty A modelowane jawnie; stopa overnight z FRED, marża prerejestrowana
+
+**Status:** ACCEPTED · 2026-09-20 · **Doprecyzowuje:** ADR-024, SPEC §9
+
+**Kontekst:** `config/v1_baseline.yaml` deklarował `financing.cohort_a_mode: rate_differential`, `directional_asymmetry: true` i `triple_swap_wednesday: true`, ale w kodzie nie było ani jednej linii swapu. Wszystkie dotychczasowe wyniki liczyły wyłącznie spread i poślizg.
+
+Skala pominięcia: bramka 0 zmierzyła koszt spreadu na 0,0106 R. Różnica stóp EUR/USD sięgała w okresie badawczym 2,8 pp; przy stopie 2 × `atr_d1_14` ≈ 1,1% ceny i czternastu dniach kalendarzowych (10 dni roboczych) daje to ok. 0,13 R — **więcej niż cały próg bramki 2** (0,10 R) i ponad dziesięciokrotność spreadu. Liczba jest przypięta testem `test_financing_is_material_against_the_gate_2_threshold`.
+
+Drugi, poważniejszy problem: swap jest kierunkowy. Long dostaje to, co short płaci. Pominięcie go nie obniża wyniku symetrycznie, tylko dokłada stałą przewagę jednej stronie każdej pary — czyli dokładnie ten kształt, który kontrola #8 z §10.2 ma rozpoznawać jako dryf udający edge. Strategia kupująca AUD za JPY w latach 2017–2019 zarabiałaby na carry i wyglądała jak sygnał.
+
+**Decyzja:** Finansowanie jest modelowane jawnie, dla każdej transakcji kohorty A, wzorem z konfiguracji:
+
+```
+Koszt_R = (stawka_roczna × dni) / (365 × stop_jako_ułamek_ceny)
+stawka_roczna = marża + (kwotowana − bazowa)   long
+                marża + (bazowa − kwotowana)   short
+```
+
+1. **Źródło stóp:** OECD *Immediate Rates (< 24 Hours): Call Money/Interbank Rate*, `IRSTCI01<ISO>M156N` z FRED. Sprawdzone 2026-09-20: komplet 132/132 miesiące 2015–2025 dla wszystkich sześciu walut kohorty A. Raport: `reports/rates_coverage.md`.
+
+2. **Stopa z miesiąca poprzedzającego decyzję.** Seria miesięczna dla stycznia jest średnią ze stycznia, więc w styczniu nieznana. Użycie jej byłoby zaglądaniem w przyszłość. Stopa overnight jest publicznie obserwowalna na bieżąco, więc średnia miesiąca minionego jest w chwili decyzji faktycznie znana — wybór konserwatywny, nie przybliżenie. Stopa ustalona w chwili decyzji obowiązuje do końca transakcji; wariant „stopa z dnia rozstrzygnięcia” byłby look-aheadem.
+
+3. **Potrójny swap w środę.** Rollover w środę przesuwa datę waluty przez weekend i nalicza trzy dni; sobota i niedziela nie mają własnego rolloveru. Pełny tydzień daje 1+1+3+1+1 = 7 dni, czyli tyle, ile dni kalendarzowych.
+
+4. **Marża brokera:** `costs.financing.cohort_a_markup_annual_pct: 1.0`, płacona przez obie strony. **To jedyna liczba w modelu kosztów bez sparsowanego źródła** — jest założeniem modelowym, nie pomiarem, i jest tak oznaczona w konfiguracji. Nie da się jej wyprowadzić bez wyboru konkretnego brokera, czego zakazuje ADR-024. Zabezpieczenie: jej wpływ musi być widoczny w obowiązkowej drabince 1×/2×/3× (§9), a wartość jest prerejestrowana przed pierwszym przebiegiem V1a.
+
+**Uzasadnienie wyboru „modelować" zamiast „pominąć z uzasadnieniem":** pominięcie byłoby optymistyczne dla jednej strony każdej pary i nieprzewidywalne co do znaku. Nie istnieje pesymistyczny wariant uproszczony: obciążenie obu stron pełną różnicą stóp karałoby stronę, która carry faktycznie dostaje, i zaniżałoby wynik z powodu niezwiązanego z jakością sygnału.
+
+**Odrzucone:**
+- *Stopa dzienna zamiast miesięcznej.* FRED ma serie dzienne tylko dla USD (`DFF`), EUR (`ECBDFR`) i GBP (`IUDSOIA`); dla JPY, AUD i CAD nie ma. Mieszanie częstotliwości między walutami tej samej pary dawałoby różnicę stóp o niejednorodnym pochodzeniu.
+- *Punkty swapowe konkretnego brokera.* Zakazane przez ADR-024 (model broker-agnostyczny).
+- *Zerowa marża.* Carry wychodziłby darmowy, a przy dużych różnicach stóp strona otrzymująca miałaby systematyczną, niezwiązaną z sygnałem przewagę.
+
+**Konsekwencje:** `financing_r` jest osobną kolumną etykiety, a `r` jest o nią pomniejszone; wynik sprzed korekty pozostaje odtwarzalny jako `r + financing_r`. Drabinka kosztowa odejmuje finansowanie w każdym scenariuszu, ale go NIE skaluje mnożnikiem — swap rośnie z liczby dni trzymania i różnicy stóp, a nie z warunków brokera na spreadzie. Sekcja `frozen: true` nie zmienia się (`costs` nie jest zamrożone), więc `frozen_sha256` = `2eab678f…` zostaje bez zmian i prerejestracja z ADR-027..031 jest nienaruszona. Wynik bramki 0 (losowe wejścia) nie wymaga przeliczenia: jest testem negatywnym na symetrycznej próbie long/short, a jego kryterium dotyczy wyniku przed kosztem.
+
+---
+
+## ADR-036 — Benchmark carry + trend: brak rentowności 2-letnich blokuje §12; decyzja odłożona do bramki 2
+
+**Status:** ACCEPTED · 2026-09-20 · **Dotyczy:** SPEC §12, ADR-019
+
+**Kontekst:** ADR-019 czyni koszyk carry + trend benchmarkiem obowiązkowym, a §12 definiuje jego ranking jako `yield_2y + zwrot 3-miesięczny` dla ośmiu walut vs USD. Przy budowie źródła stóp (2026-09-20) okazało się, że FRED ma rentowność 2-letnią **wyłącznie dla USD** (`DGS2`). Dla EUR, GBP, JPY, AUD, CAD, NZD i CHF nie ma jej w żadnej częstotliwości. Wyszukiwanie po nazwie („2-Year Government Benchmark Bond Yield”, „2-year government bond yield”) zwraca Turcję, Meksyk („6-month to 2-year”) i serie niezwiązane. To brak danych, nie zły identyfikator. Udokumentowane w `reports/rates_coverage.md`, odtwarzalne z cache w `data/raw/rates/`.
+
+Dostępna jest natomiast jednorodna seria terminowa dla wszystkich ośmiu walut: 3-miesięczny interbank (`IR3TIB01<ISO>M156N`, OECD, miesięczna), komplet 2015–2025.
+
+**Decyzja:** Benchmark **nie jest** implementowany na zamienniku podjętym po cichu. Rozstrzygnięcie odkładamy do momentu, w którym stanie się wiążące, czyli do bramki 2 — wcześniej nie jest do niczego potrzebny, a wybór wejścia do benchmarku obowiązkowego zrobiony po zobaczeniu wyniku strategii byłby wyborem pod wynik.
+
+Do bramki 2 obowiązują dwie reguły:
+
+1. **Zapis o braku jest częścią wyniku.** Każdy raport powołujący się na §12 musi stwierdzać, że benchmark nie został policzony, i odsyłać do tego ADR-u. Milczenie jest tu gorsze niż brak liczby.
+2. **Wariant zamienny musi być prerejestrowany PRZED bramką 2**, nowym ADR-em, który wskazuje jedną z dróg: (a) pozyskanie rentowności 2-letnich z innego źródła (OECD.Stat, dane banków centralnych, EBC SDW) — odcinek pracy porównywalny z kalendarzem; (b) podmiana `yield_2y` → `interbank_3m` z uzasadnieniem, dlaczego zmiana punktu krzywej nie zmienia sensu rankingu carry; (c) uznanie §12 za niewykonalny i wykreślenie go z kryteriów, z przyjęciem, że kontrola #5 z §10.2 odpada, a ciężar spada na kontrole #1 i #4.
+
+**Uzasadnienie odłożenia:** ADR-019 uzasadnia benchmark tym, że ma udokumentowany prior i zerową liczbę stopni swobody. Zamiennik dobrany dziś „na oko” odbierałby mu dokładnie tę własność. Jednocześnie wymuszenie decyzji teraz, przy nieznanej jeszcze jakości źródeł alternatywnych, groziłoby wybraniem drogi (b) z wygody.
+
+**Ryzyko przyjęte świadomie:** jeżeli do bramki 2 nikt nie zajmie się tym punktem, presja czasu popchnie ku wariantowi (b) albo (c). Dlatego termin jest twardy — prerejestracja przed bramką 2, nie przy niej.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
