@@ -123,7 +123,8 @@ def apply_financing(labels: pl.DataFrame, rates: pl.DataFrame,
     # Różnica stóp jest stała w obrębie (para, miesiąc decyzji) — liczymy ją
     # raz na taką parę zamiast raz na transakcję.
     cache: dict[tuple[str, int, int], float] = {}
-    out = []
+    out: list[float] = []
+    units: list[float] = []
     for row in labels.iter_rows(named=True):
         day = row["ts"].date()
         key = (row["symbol"], day.year, day.month)
@@ -132,19 +133,44 @@ def apply_financing(labels: pl.DataFrame, rates: pl.DataFrame,
         risk = abs(row["entry_price"] - row["sl"])
         if risk <= 0:
             raise ValueError(f"zerowy dystans stopu: {row['symbol']} {row['ts']}")
+        days = rollover_days(row["ts"], row["t1"])
+        stop_pct = risk / abs(row["entry_price"])
         out.append(financing_r(
-            side=row["side"],
-            days=rollover_days(row["ts"], row["t1"]),
-            stop_pct=risk / abs(row["entry_price"]),
-            diff_pct=cache[key],
-            markup_annual_pct=markup_annual_pct,
+            side=row["side"], days=days, stop_pct=stop_pct,
+            diff_pct=cache[key], markup_annual_pct=markup_annual_pct,
         ))
+        # Koszt w R przypadający na JEDEN punkt procentowy stawki rocznej.
+        # Dzięki niemu marżę da się przeliczyć bez ponownego chodzenia po
+        # stopach — wzór jest w niej liniowy (ADR-037, oś wrażliwości).
+        units.append(days / (365.0 * stop_pct) / 100.0)
 
-    fin = pl.Series("financing_r", out, dtype=pl.Float64)
-    return labels.with_columns(fin).with_columns(
-        (pl.col("r") - pl.col("financing_r")).alias("r"))
+    return labels.with_columns(
+        pl.Series("financing_r", out, dtype=pl.Float64),
+        pl.Series("fin_unit_r", units, dtype=pl.Float64),
+    ).with_columns((pl.col("r") - pl.col("financing_r")).alias("r"))
 
 
 def markup_from(cfg: dict) -> float:
     """Marża brokera dla kohorty A, w procentach rocznie, wprost z configu."""
     return float(cfg["costs"]["financing"]["cohort_a_markup_annual_pct"])
+
+
+def markup_grid_from(cfg: dict) -> tuple[float, ...]:
+    """Oś wrażliwości na marżę (ADR-037). Wynik punktowy nie wystarcza."""
+    return tuple(float(x) for x in
+                 cfg["costs"]["financing"]["cohort_a_markup_sensitivity"])
+
+
+def refinanced(labels: pl.DataFrame, base_markup: float,
+               markup: float) -> pl.Series:
+    """Kolumna `r` przy innej marży, bez ponownego czytania stóp.
+
+    Stawka roczna wchodzi we wzór liniowo, a `fin_unit_r` to koszt w R na
+    jeden punkt procentowy — więc zmiana marży to dodanie różnicy razy ta
+    jednostka. Carry i liczba dni zostają takie, jakie były.
+    """
+    for col in ("r", "financing_r", "fin_unit_r"):
+        if col not in labels.columns:
+            raise ValueError(f"etykiety bez kolumny `{col}` — najpierw apply_financing()")
+    delta = (markup - base_markup) * pl.col("fin_unit_r")
+    return labels.select((pl.col("r") - delta).alias("r"))["r"]

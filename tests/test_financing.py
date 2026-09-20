@@ -1,4 +1,4 @@
-"""Finansowanie kohorty A: potrójna środa, kierunkowość, marża (ADR-035).
+"""Finansowanie kohorty A: potrójna środa, kierunkowość, marża (ADR-035, ADR-037).
 
 Wszystko na syntetyku z ręcznie policzoną odpowiedzią. Na prawdziwych
 transakcjach nie wiadomo, ile swap „powinien" wynieść, więc test niczego
@@ -13,9 +13,12 @@ import pytest
 
 from src.data.rates import SCHEMA
 from src.execution.financing import (
-    ROLLOVER_UTC, apply_financing, financing_r, markup_from, rollover_days,
+    ROLLOVER_UTC, apply_financing, financing_r, markup_from, markup_grid_from,
+    refinanced, rollover_days,
 )
-from src.validation.cost_sensitivity import repriced
+from src.validation.cost_sensitivity import (
+    markup_ladder, render_markup_markdown, repriced,
+)
 
 UTC = dt.timezone.utc
 
@@ -218,3 +221,43 @@ def test_labels_without_required_columns_are_rejected():
 def test_markup_comes_from_the_config():
     cfg = {"costs": {"financing": {"cohort_a_markup_annual_pct": 1.0}}}
     assert markup_from(cfg) == 1.0
+
+
+# --- oś wrażliwości na marżę (ADR-037) --------------------------------------
+
+def test_refinancing_reproduces_a_direct_computation():
+    """Przeliczenie marży bez czytania stóp musi dać to samo, co liczenie od zera."""
+    base, other = 0.5, 2.0
+    a = apply_financing(labels_frame(), rates_frame(), markup_annual_pct=base)
+    b = apply_financing(labels_frame(), rates_frame(), markup_annual_pct=other)
+    assert refinanced(a, base, other).to_list() == pytest.approx(b["r"].to_list())
+
+
+def test_refinancing_to_the_same_markup_changes_nothing():
+    a = apply_financing(labels_frame(), rates_frame(), markup_annual_pct=0.5)
+    assert refinanced(a, 0.5, 0.5).to_list() == pytest.approx(a["r"].to_list())
+
+
+def test_higher_markup_hurts_both_directions_equally():
+    """Marżę płacą obie strony, więc różnica long/short nie zależy od niej."""
+    a = apply_financing(labels_frame(), rates_frame(), markup_annual_pct=0.5)
+    r_lo, r_hi = a["r"].to_list(), refinanced(a, 0.5, 2.0).to_list()
+    assert r_hi[0] < r_lo[0] and r_hi[1] < r_lo[1]
+    assert (r_lo[0] - r_hi[0]) == pytest.approx(r_lo[1] - r_hi[1])
+
+
+def test_markup_ladder_covers_the_configured_grid():
+    cfg = {"costs": {"financing": {"cohort_a_markup_annual_pct": 0.5,
+                                   "cohort_a_markup_sensitivity": [0.5, 1.0, 2.0]}}}
+    a = apply_financing(labels_frame(), rates_frame(),
+                        markup_annual_pct=markup_from(cfg))
+    ladder = markup_ladder(a, markup_from(cfg), markup_grid_from(cfg))
+    assert [s.markup_annual_pct for s in ladder] == [0.5, 1.0, 2.0]
+    assert ladder[0].expectancy > ladder[1].expectancy > ladder[2].expectancy
+    md = render_markup_markdown(ladder)
+    assert all(f"| {m:g}% |" in md for m in (0.5, 1.0, 2.0))
+
+
+def test_refinancing_without_apply_financing_is_rejected():
+    with pytest.raises(ValueError, match="fin_unit_r|financing_r"):
+        refinanced(labels_frame(), 0.5, 1.0)

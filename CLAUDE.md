@@ -348,14 +348,22 @@ Ustalenia z danych:
   Overnight (OECD `IRSTCI01<ISO>M156N`) komplet 132/132 miesiące
   2015–2025 dla całej kohorty A. `rate_on()` bierze miesiąc POPRZEDNI —
   średnia stycznia nie jest znana w styczniu
-- `src/execution/financing.py` — swap FX (ADR-035): `rollover_days()`
+- `src/execution/financing.py` — swap FX (ADR-035, ADR-037): `rollover_days()`
   ze środą liczoną potrójnie (tydzień = 1+1+3+1+1 = 7),
   `financing_r()` kierunkowe, `apply_financing()` dokłada `financing_r`
   i pomniejsza `r` (wynik sprzed korekty = `r + financing_r`).
-  Marża `costs.financing.cohort_a_markup_annual_pct: 1.0` to JEDYNA
-  liczba w modelu kosztów bez sparsowanego źródła — założenie modelowe,
-  ograniczane drabinką kosztową
+  Marża `cohort_a_markup_annual_pct: 0.5` to JEDYNA liczba w modelu
+  kosztów bez sparsowanego źródła, więc NIE wolno jej raportować
+  punktowo: każdy wynik idzie z osią `cohort_a_markup_sensitivity`
+  [0,5; 1,0; 2,0] przez `markup_ladder()` (ADR-037). `refinanced()`
+  przelicza marżę z `fin_unit_r` bez ponownego czytania stóp
 
+ADR-037: marża swapu 0,5% + OBOWIĄZKOWA oś wrażliwości [0,5; 1,0; 2,0].
+Koryguje ADR-035 pkt 4, który deklarował zabezpieczenie przez drabinkę
+1×/2×/3× — nieistniejące, bo finansowanie świadomie nie jest nią skalowane.
+Powod: przy stopie 1,1% ceny marża 1,0% kosztuje 0,035 R, czyli 3,3× cały
+zmierzony spread i 35% progu bramki 2; dla USDCAD i EURJPY przewyższa
+medianę faktycznego carry 3–5×.
 ADR-035: finansowanie kohorty A modelowane jawnie (pominięcie warte
 ~0,13 R przy różnicy stóp 2,8 pp i stopie 1,1% ceny — więcej niż CAŁY
 próg bramki 2, i kierunkowe, więc podszywa się pod sygnał).

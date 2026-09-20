@@ -97,6 +97,43 @@ def survives_double_cost(labels: pl.DataFrame) -> bool:
     return scenario(labels, 2.0).positive
 
 
+@dataclass(frozen=True)
+class MarkupScenario:
+    markup_annual_pct: float
+    expectancy: float
+    mean_financing_r: float
+    positive: bool
+
+
+def markup_ladder(labels: pl.DataFrame, base_markup: float,
+                  markups: tuple[float, ...]) -> list[MarkupScenario]:
+    """Wynik przy kilku marżach brokera (ADR-037).
+
+    Marża jest jedyną wielkością w modelu kosztów bez sparsowanego źródła,
+    a przy typowym stopie kosztuje więcej niż cały spread. Raportowanie jej
+    punktowo dawałoby werdykt zależny od liczby, której nie znamy.
+    """
+    from ..execution.financing import refinanced
+    out = []
+    for m in markups:
+        r = refinanced(labels, base_markup, m)
+        fin = labels["financing_r"] + (m - base_markup) * labels["fin_unit_r"]
+        mean = float(r.mean())
+        out.append(MarkupScenario(markup_annual_pct=m, expectancy=mean,
+                                  mean_financing_r=float(fin.mean()),
+                                  positive=mean > 0))
+    return out
+
+
+def render_markup_markdown(ladder: list[MarkupScenario]) -> str:
+    rows = "\n".join(
+        f"| {s.markup_annual_pct:g}% | {s.expectancy:+.4f} | "
+        f"{s.mean_financing_r:+.4f} | {'tak' if s.positive else 'NIE'} |"
+        for s in ladder)
+    return ("| Marża brokera | E[R] | średni swap (R) | dodatnie |\n"
+            "|---|---|---|---|\n" + rows)
+
+
 def render_markdown(ladder: list[CostScenario]) -> str:
     """Tabela do raportu przebiegu."""
     rows = "\n".join(

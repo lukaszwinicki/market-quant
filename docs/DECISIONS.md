@@ -627,6 +627,41 @@ Do bramki 2 obowiązują dwie reguły:
 
 ---
 
+## ADR-037 — Marża swapu: 0,5% i obowiązkowa oś wrażliwości zamiast wartości punktowej
+
+**Status:** ACCEPTED · 2026-09-20 · **Koryguje:** ADR-035 pkt 4
+
+**Kontekst:** ADR-035 prerejestrował marżę brokera na 1,0% rocznie i deklarował, że zabezpieczeniem przed dowolnością tej liczby jest jej widoczność w drabince 1×/2×/3× z §9. **To zabezpieczenie nie zostało zaimplementowane i nie mogło zostać** — ten sam ADR (i `validation/cost_sensitivity.py`) rozstrzyga, że finansowanie jest od wyniku odejmowane, ale mnożnikiem kosztu NIE skalowane, bo swap rośnie z dni trzymania i różnicy stóp, a nie z warunków brokera na spreadzie. Oba zapisy są poprawne osobno i sprzeczne razem: marża nie była stress-testowana niczym.
+
+Pomiar, który ujawnił wagę problemu (2026-09-20, `src/execution/financing.py`):
+
+| stop (2 × `atr_d1_14`) | marża 0,5% | 1,0% | 2,0% |
+|---|---|---|---|
+| 0,8% ceny | 0,024 R | 0,048 R | 0,096 R |
+| 1,1% ceny | 0,017 R | 0,035 R | 0,070 R |
+| 2,0% ceny | 0,010 R | 0,019 R | 0,038 R |
+
+Przy typowym stopie 1,1% marża 1,0% kosztuje 0,035 R na transakcję — **3,3× więcej niż cały zmierzony koszt spreadu** (0,0106 R, bramka 0) i 35% progu bramki 2. Zestawienie z rzeczywistą medianą |różnicy stóp| w segmencie RESEARCH (EURUSD 1,19 pp, GBPUSD 0,58, USDJPY 0,83, AUDUSD 0,46, USDCAD 0,18, EURJPY 0,31) pokazuje, że dla USDCAD i EURJPY marża przy 1,0% **przewyższa medianę faktycznego carry trzy- do pięciokrotnie**. Wielkość bez sparsowanego źródła byłaby więc dla połowy par członem dominującym modelu finansowania.
+
+**Decyzja:**
+
+1. **Wartość punktowa spada do `cohort_a_markup_annual_pct: 0.5`.** Uzasadnienie: 1,0% zostało dobrane „bezpiecznie", zanim policzono jego koszt; przy znanej już skali jest to wartość karna, nie konserwatywna. 0,5% odpowiada konkurencyjnym warunkom detalicznym FX i nadal kosztuje 1,6× zmierzony spread, więc nie jest optymistyczne w rozumieniu ADR-024.
+
+2. **Wynik punktowy nie wystarcza.** Każdy raport powołujący się na expectancy kohorty A niesie oś `costs.financing.cohort_a_markup_sensitivity: [0.5, 1.0, 2.0]`. Werdykt bramki zależny wyłącznie od wartości punktowej marży jest nieważny.
+
+3. **Mechanizm:** `apply_financing()` zapisuje `fin_unit_r` — koszt w R na jeden punkt procentowy stawki rocznej. Stawka wchodzi we wzór liniowo, więc `refinanced()` przelicza marżę bez ponownego czytania stóp, przy niezmienionym carry i liczbie dni. Równoważność z liczeniem od zera jest przypięta testem.
+
+4. **Drabinka kosztowa z §9 zostaje bez zmian:** finansowanie jest w niej odejmowane, ale nieskalowane. Marża ma własną oś, bo ma własną przyczynę.
+
+**Odrzucone:**
+- *Utrzymanie 1,0%.* Zjada 35% progu bramki 2 liczbą, której nie znamy; porażka H₁ nie byłaby wtedy informacją o sygnale.
+- *2,0% jako maksymalny pesymizm.* 0,070 R przy typowym stopie praktycznie przesądza wynik bramki 2 z góry. Pesymizm, który uniemożliwia rozstrzygnięcie, nie jest ostrożnością — jest rezygnacją z pomiaru.
+- *Sama oś, bez wartości punktowej.* Kryterium bramki 2 (`≥ +0,10 R`) wymaga jednej liczby; przedział bez punktu odniesienia przeniósłby decyzję na moment odczytu wyniku.
+
+**Konsekwencje:** `costs` nie jest sekcją `frozen: true`, więc `frozen_sha256` = `2eab678f…` zostaje bez zmian i prerejestracja z ADR-027..031 jest nienaruszona. Żaden dotychczasowy wynik nie wymaga przeliczenia — finansowanie nie było jeszcze nałożone na żadną próbę.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

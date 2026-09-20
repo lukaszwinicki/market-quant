@@ -422,11 +422,13 @@ costs:
     cohort_b_mode: "full_rate"           # CFD: benchmark + marża brokera
     broker_markup_annual_pct: [1.5, 3.0]
 
-    # Marża doliczana do swapu FX, płacona przez OBIE strony (ADR-035).
+    # Marża doliczana do swapu FX, płacona przez OBIE strony (ADR-037).
     # Jedyna liczba w modelu kosztów bez sparsowanego źródła — jest
-    # założeniem modelowym, nie pomiarem. Dlatego jej wpływ musi być
-    # widoczny w drabince 1×/2×/3× (costs.sensitivity_multipliers).
-    cohort_a_markup_annual_pct: 1.0
+    # założeniem modelowym, nie pomiarem, i przy typowym stopie kosztuje
+    # więcej niż cały spread. Dlatego NIE wolno jej raportować punktowo:
+    # każdy wynik idzie z osią `cohort_a_markup_sensitivity`.
+    cohort_a_markup_annual_pct: 0.5
+    cohort_a_markup_sensitivity: [0.5, 1.0, 2.0]
     # Stopy: OECD overnight (call money) z FRED, miesięczne, brane
     # z miesiąca POPRZEDZAJĄCEGO decyzję — patrz src/data/rates.py.
     cohort_a_rate_kind: "overnight"
