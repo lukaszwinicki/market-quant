@@ -541,14 +541,34 @@ MISSING_CONTROLS = (
 
 
 def decision_summary(decisions: pl.DataFrame) -> pl.DataFrame:
-    """Ile barów dostało który powód — log decyzji w jednej tabeli."""
+    """Ile barów dostało który powód — log decyzji w jednej tabeli.
+
+    `n` liczy bary, w których powód był PIERWSZY wg priorytetu ADR-033;
+    `n_any` — w których zadziałał w ogóle. Obie kolumny są potrzebne, bo
+    warunek o niskim priorytecie potrafi zniknąć z tabeli mimo że działa na
+    każdym barze, który obejmuje: `10_sunday_open` (ADR-042) stoi po
+    `no_signal` i limitach ekspozycji, więc pierwszym powodem bywa rzadko.
+    """
     if not decisions.height:
-        return pl.DataFrame(schema={"reason": pl.Utf8, "n": pl.UInt32, "share": pl.Float64})
-    return (decisions
-            .with_columns(pl.col("reason").fill_null("enter"))
-            .group_by("reason").len().rename({"len": "n"})
-            .with_columns((pl.col("n") / decisions.height).alias("share"))
-            .sort("n", descending=True))
+        return pl.DataFrame(schema={"reason": pl.Utf8, "n": pl.UInt32,
+                                    "share": pl.Float64, "n_any": pl.UInt32})
+    first = (decisions
+             .with_columns(pl.col("reason").fill_null("enter"))
+             .group_by("reason").len().rename({"len": "n"})
+             .with_columns((pl.col("n") / decisions.height).alias("share")))
+
+    # Bar bez powodu ma `reasons` puste — odsiewane PRZED split, żeby explode
+    # nie musiał rozstrzygać, czym jest pusta lista (empty_as_null).
+    any_ = (decisions.filter(pl.col("reasons") != "")
+            .select(pl.col("reasons").str.split(","))
+            .explode("reasons", empty_as_null=False)
+            .group_by("reasons").len()
+            .rename({"reasons": "reason", "len": "n_any"}))
+
+    return (first.join(any_, on="reason", how="full", coalesce=True)
+            .with_columns(pl.col("n").fill_null(0), pl.col("n_any").fill_null(0),
+                          pl.col("share").fill_null(0.0))
+            .sort("n_any", "n", descending=True))
 
 
 def render(run_id: str, params: dict, a: Assessment) -> str:
@@ -594,11 +614,21 @@ def render(run_id: str, params: dict, a: Assessment) -> str:
         "",
         "## Log decyzji (każdy zamknięty bar H1, ADR-033)",
         "",
-        "| Powód | barów | udział |",
-        "|---|---|---|",
+        "| Powód | barów (pierwszy) | udział | barów (zadziałał) |",
+        "|---|---|---|---|",
     ]
     for r in decision_summary(base.decisions).iter_rows(named=True):
-        lines.append(f"| `{r['reason']}` | {r['n']} | {r['share']:.3%} |")
+        # `enter` to brak powodu, więc druga kolumna go nie dotyczy
+        any_cell = "—" if r["reason"] == "enter" else str(r["n_any"])
+        lines.append(f"| `{r['reason']}` | {r['n']} | {r['share']:.3%} "
+                     f"| {any_cell} |")
+    lines += [
+        "",
+        "„Pierwszy” to powód o najwyższym priorytecie ADR-033; „zadziałał” — "
+        "ile barów warunek obejmował niezależnie od priorytetu. Warunek "
+        "o niskim priorytecie może mieć zero w pierwszej kolumnie i tysiące "
+        "w drugiej.",
+    ]
 
     lines += [
         "",

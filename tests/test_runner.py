@@ -181,6 +181,23 @@ def test_decision_summary_accounts_for_every_bar(evaluate, rates):
     assert decision_summary(v.decisions)["n"].sum() == v.decisions.height
 
 
+def test_decision_summary_shows_conditions_that_are_never_the_first_reason():
+    """Warunek o niskim priorytecie może działać na każdym objętym barze
+    i mieć zero w kolumnie „pierwszy”. Bez `n_any` znikałby z raportu —
+    tak było z `10_sunday_open` (ADR-042), który stoi po `no_signal`."""
+    dec = pl.DataFrame({
+        "reason": ["no_signal", "no_signal", "9_friday", None],
+        "reasons": ["no_signal,10_sunday_open", "no_signal",
+                    "9_friday,10_sunday_open", ""],
+    })
+    s = decision_summary(dec)
+    row = s.filter(pl.col("reason") == "10_sunday_open").row(0, named=True)
+    assert row["n"] == 0, "warunek nie był pierwszym powodem ani razu"
+    assert row["n_any"] == 2
+    assert s.filter(pl.col("reason") == "no_signal")["n_any"][0] == 2
+    assert s["n"].sum() == dec.height
+
+
 def test_split_boundary_blocks_entries_whose_horizon_leaves_the_split(evaluate, rates):
     late = Window(T0, T0 + dt.timedelta(days=2), T0 + dt.timedelta(days=4))
     bars = hourly(T0 + dt.timedelta(days=3), 10)
