@@ -662,6 +662,62 @@ Przy typowym stopie 1,1% marża 1,0% kosztuje 0,035 R na transakcję — **3,3×
 
 ---
 
+## ADR-038 — Benchmark §12: carry mierzone `interbank_3m`, koszyk zawężony do walut kohorty A
+
+**Status:** ACCEPTED · 2026-09-20 · **Zamyka blokadę:** ADR-036 · **Koryguje:** PROJECT_SPEC §12, ADR-019 · **Dotyczy:** kontrola #5 z §10.2
+
+**Kontekst:** ADR-036 zablokował benchmark carry + trend i zobowiązał do prerejestracji wariantu zamiennego **przed** bramką 2, wskazując trzy drogi: (a) własne źródło rentowności 2-letnich, (b) podmiana `yield_2y` → `interbank_3m`, (c) wykreślenie §12. Zwiad przeprowadzono 2026-09-20, wynik w `reports/yield2y_sources.md`. Żaden przebieg strategii jeszcze nie istnieje (`trials.jsonl` ma jeden wpis, kontrolę bramki 0), więc decyzja zapada przed jakimkolwiek wynikiem V1a.
+
+**Ustalenia zwiadu, na których opiera się ta decyzja:**
+
+1. **OECD nie ma punktu 2-letniego w ogóle.** Struktura przepływu `OECD.SDD.STES/DSD_STES@DF_FINMARK` (SDMX) wymienia dokładnie trzy miary stóp: `IRLT` (≈10 lat), `IR3TIB` (3M) i `IRSTCI` (overnight). Brak 2Y na FRED nie był artefaktem fasady — droga (a) przez OECD.Stat jest zamknięta u źródła.
+
+2. **2Y da się pozyskać, ale tylko z ośmiu różnych instytucji i w czterech różnych definicjach:** zero-kuponowy spot z modelu (EUR/ECB, GBP/BoE, CHF/SNB), par yield constant-maturity (USD/FRED), rentowność konkretnej obligacji benchmarkowej (CAD/BoC), interpolacja po krzywej benchmarków lub rynek wtórny (JPY/MoF, AUD/RBA, NZD/RBNZ). Kryterium „ta sama definicja dla wszystkich walut” jest tu niespełnialne, a benchmark §12 jest rankingiem **przekrojowym**, czyli operacją, w której stały bias per waluta się nie znosi.
+
+3. **Trzy luki po stronie wydawcy, nie do obejścia parserem:** RBA przestało publikować dzienne rentowności AGS (ostatnia dzienna wartość 2023-06-07; następca `f2.1-data.csv` jest miesięczny); seria RBNZ `INM.DG102.NZZCF` ma w 2020 r. 28 obserwacji zamiast ~250; kostki SNB `rendoblid`/`rendoblim` mają ostatnią obserwację 2025-07-31 przy `PublishingDate` 2025-09-01, podczas gdy inne kostki tego samego API są bieżące (2026-09) — serie wyglądają na wygaszone, a dziura wypada wewnątrz zapieczętowanego hold-outu.
+
+4. **§12 w literalnym brzmieniu jest niewykonalny niezależnie od rentowności.** Ranking „8 walut vs USD” wymaga NZDUSD i USDCHF. Kohorta A to sześć par pokrywających sześć walut (USD, EUR, GBP, JPY, AUD, CAD); NZD i CHF nie są pobierane, a CHF jest wykluczony wpisem `instruments.excluded.CHF` w sekcji z `frozen: true`. Dołożenie USDCHF oznaczałoby zmianę sekcji zamrożonej, czyli unieważnienie wszystkich dotychczasowych wyników i nowy `frozen_sha256` — za benchmark porównawczy.
+
+5. **Pomiar podmiany punktu krzywej** (segment RESEARCH 2015-01…2021-12, hold-out nietknięty; przekrój miesięczny, ranking po 2Y vs ranking po `interbank_3m`):
+
+| Zestaw | Miesięcy | Spearman mediana / min | Zgodna noga long | Zgodna noga short |
+|---|---|---|---|---|
+| 8 walut, top-2 / bottom-2 (§12 dosłownie) | 73/84 | 0,976 / 0,786 | 70% | 100% |
+| 5 walut vs USD, top-1 / bottom-1 | 84/84 | 1,000 / 0,700 | 83% | 100% |
+| 5 walut vs USD, top-2 / bottom-2 | 84/84 | 1,000 / 0,700 | 74% | 100% |
+
+**Decyzja:**
+
+1. **Miara carry:** `yield_2y` → `interbank_3m` (OECD `IR3TIB01<ISO>M156N` z FRED, seria miesięczna, komplet 132/132 dla wszystkich walut, już w `data/rates/fred.parquet`).
+
+2. **Stopa z miesiąca poprzedzającego decyzję**, identycznie jak w ADR-035 pkt 2. Benchmark i strategia korzystają z tej samej konwencji, więc porównanie nie miesza dwóch reżimów informacyjnych.
+
+3. **Uniwersum:** pięć walut kohorty A vs USD — **EUR, GBP, JPY, AUD, CAD**. Nie osiem. Uzasadnienie w ustaleniu 4: alternatywą jest ruszenie sekcji `frozen: true`.
+
+4. **Nogi: long top-1, short bottom-1.** Przy ośmiu walutach §12 brało 2/8 = 25% uniwersum na nogę; przy pięciu 1/5 = 20% jest bliżej tej proporcji niż 2/5 = 40%. Pomiar z ustalenia 5 dodatkowo pokazuje, że przy top-1 podmiana miary psuje nogę long rzadziej (17% miesięcy) niż przy top-2 (26%).
+
+5. **Reszta konstrukcji §12 bez zmian:** ranking po `carry + zwrot 3-miesięczny`, równe ryzyko, sizing przez ATR, brak stopów, rebalans tygodniowy. Zero parametrów swobodnych — to była cała wartość tego benchmarku wg ADR-019 i zostaje nienaruszona.
+
+6. **Każdy raport porównujący V1a z benchmarkiem niesie zapis o zawężeniu** i odsyła do tego ADR-u. Obowiązek z ADR-036 pkt 1 („zapis o braku jest częścią wyniku”) przechodzi w obowiązek zapisu o podmianie: benchmark jest słabszy niż ten, który uzasadniał ADR-019.
+
+**Koszty przyjęte świadomie:**
+
+- *Noga long różni się od wersji 2-letniej w ~17% miesięcy.* Waluty na górze rankingu są ciasno skupione i punkt 2-letni potrafi je zamienić miejscami. Noga short jest identyczna w 100% miesięcy, więc rozjazd dotyczy wyłącznie tego, którą walutę koszyk kupuje.
+- *Koszyk 1 long / 1 short ma wyższą wariancję idiosynkratyczną niż 2/2 z ośmiu.* Benchmark jest przez to bardziej hałaśliwy, a „system bije koszyk” jest słabszym dowodem. Dlatego porównanie na bramce 2 musi iść z przedziałem ufności różnicy, nie jako dwie liczby punktowe.
+- *Prior z literatury (Lustig i in. 2011; Menkhoff i in. 2012) dotyczy koszyków G10.* Pięć walut to węższy przekrój niż w cytowanych pracach i prior stosuje się do niego słabiej. Zapisane, nie wygładzone.
+
+**Odrzucone:**
+
+- *Wariant (a), własne źródło 2Y.* Osiem parserów to odcinek pracy porównywalny z kalendarzem i byłby wykonalny, ale wynik i tak nie spełniałby kryterium jednej definicji (ustalenie 2) ani kompletności (ustalenie 3), a nie rozwiązywałby ustalenia 4. Nakład bez rozstrzygnięcia.
+- *Wariant (c), wykreślenie §12.* Zasadny, gdyby carry nie dawało się zmierzyć wcale. Daje się — na innym punkcie krzywej i węższym uniwersum. Kontrola #5 zostaje, choć w słabszej postaci; wykreślenie przerzuciłoby cały ciężar na kontrole #1 i #4 bez potrzeby.
+- *Dołożenie NZDUSD i USDCHF do kohorty A.* Zmiana sekcji `frozen: true` unieważniająca wszystkie wyniki, żeby policzyć benchmark. Odwrócenie hierarchii: benchmark ma mierzyć projekt, a nie przestawiać jego zbiór instrumentów.
+- *`overnight` zamiast `interbank_3m`.* Seria overnight jest w projekcie już użyta do finansowania (ADR-035). Benchmark liczony z tej samej serii, co model kosztów strategii, dzieliłby z nią błąd; 3M jest niezależnym punktem krzywej i jest kompletny dla wszystkich ośmiu walut.
+- *Rozstrzygnięcie przy bramce 2 zamiast teraz.* ADR-036 pkt 2 wyznaczył twardy termin właśnie po to, żeby nie wybierać wejścia do benchmarku po zobaczeniu wyniku strategii.
+
+**Konsekwencje:** parametry benchmarku trafiają do `validation.benchmark_carry_trend`, sekcji **bez** `frozen: true` (zamrożone jest tylko `validation.acceptance_thresholds`), więc `frozen_sha256` = `2eab678f…` zostaje bez zmian i prerejestracja z ADR-027..031 jest nienaruszona. Cechy V1b `carry_2y` i `d_carry_20d` (SPEC §6, poz. 7–8) **nie są objęte tym ADR-em** — dla sześciu walut kohorty A rentowności 2-letnie są dostępne (poza AUD po 2023-06, gdzie zostaje seria miesięczna), więc decyzja o ich źródle zapadnie osobno, jeśli V1b kiedykolwiek ruszy. Benchmark nadal nie jest zaimplementowany; ten ADR usuwa blokadę, nie pisze kodu.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
