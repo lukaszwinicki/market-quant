@@ -81,6 +81,29 @@ def test_spec_comes_from_config():
     assert s.anchors == (0, 1, 2, 3, 4)          # pięć kotwic, ADR-039
     assert s.r_multiple == cfg["labels"]["sl_multiple"]   # ta sama jednostka R
     assert s.carry_kind == "interbank_3m"        # ADR-038
+    assert s.rebalance_time_local == dt.time(16, 0)      # ADR-043
+    assert s.rebalance_timezone == "Europe/London"
+
+
+@pytest.mark.parametrize("day, expected_utc_hour", [
+    (dt.date(2016, 1, 11), 16),     # zima w Londynie (GMT): 16:00 = 16:00 UTC
+    (dt.date(2016, 7, 11), 15),     # lato (BST): 16:00 = 15:00 UTC
+    (dt.date(2016, 3, 25), 16),     # piątek przed zmianą czasu (27.03)
+    (dt.date(2016, 3, 28), 15),     # poniedziałek po zmianie
+])
+def test_rebalance_moment_follows_london_dst(day, expected_utc_hour):
+    """ADR-043 pkt 2 / ADR-034 pkt 4: godzina jest LOKALNA. Stały offset
+    przesuwałby moment rebalansu o godzinę przez pół roku."""
+    m = SPEC.moment_on(day)
+    assert m.tzinfo is not None and m.utcoffset() == dt.timedelta(0)
+    assert m.hour == expected_utc_hour
+    assert m.date() == day
+
+
+def test_rebalance_moment_is_the_wm_reuters_fixing_not_midnight():
+    """REGRESJA wobec ADR-039: 00:00 UTC kazało czytać bar 23:00, godzinę po
+    zamknięciu Nowego Jorku — najcieńszą godzinę doby."""
+    assert SPEC.moment_on(dt.date(2016, 1, 11)).hour != 0
 
 
 def test_usd_pairs_knows_which_currency_is_the_base():

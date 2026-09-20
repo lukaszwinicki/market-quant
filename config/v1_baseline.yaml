@@ -501,7 +501,13 @@ validation:
     # Pojedyncza kotwica byłaby cichym stopniem swobody w benchmarku,
     # którego jedyną zaletą wg ADR-019 jest ich brak.
     rebalance_anchors: [Mon, Tue, Wed, Thu, Fri]
-    rebalance_hour_utc: 0                # decyzja z ostatniego zamkniętego bara H1
+    # ADR-043: fixing WM/Reuters — standardowy moment wyceny FX, w nakładce
+    # Londyn/Nowy Jork. Było 00:00 UTC, czyli decyzja z bara 23:00, godzinę
+    # po zamknięciu NY i przed otwarciem Tokio: najcieńsza godzina doby.
+    # Czas LOKALNY + strefa, nigdy stały offset (ADR-034 pkt 4): 16:00
+    # w Londynie to 15:00 UTC latem i 16:00 UTC zimą.
+    rebalance_time_local: "16:00"
+    rebalance_timezone: "Europe/London"  # decyzja z ostatniego zamkniętego bara H1
     momentum_lookback_business_days: 63  # ≈ 3 miesiące (§12)
     momentum_price: "bid_close"          # sygnał, nie fill — jedna strona
     # 1 R = sl_multiple * atr_d1_14, czyli TA SAMA jednostka co w strategii.

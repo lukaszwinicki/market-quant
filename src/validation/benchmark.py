@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import polars as pl
@@ -72,7 +73,20 @@ class BenchmarkSpec:
     lookback_business_days: int = 63
     carry_kind: str = "interbank_3m"
     r_multiple: float = 2.0            # = labels.sl_multiple
-    rebalance_hour_utc: int = 0
+    # ADR-043: czas LOKALNY + strefa, nigdy stały offset. 16:00 w Londynie
+    # to fixing WM/Reuters — 15:00 UTC latem, 16:00 UTC zimą.
+    rebalance_time_local: dt.time = dt.time(16, 0)
+    rebalance_timezone: str = "Europe/London"
+
+    def moment_on(self, day: dt.date) -> dt.datetime:
+        """Chwila rebalansu w dniu `day`, w UTC.
+
+        Godzina jest lokalna, więc przeliczenie musi iść przez strefę —
+        stały offset przesuwałby moment o godzinę przez pół roku.
+        """
+        local = dt.datetime.combine(day, self.rebalance_time_local,
+                                    tzinfo=ZoneInfo(self.rebalance_timezone))
+        return local.astimezone(UTC)
 
 
 def spec_from(cfg: dict) -> BenchmarkSpec:
@@ -85,7 +99,8 @@ def spec_from(cfg: dict) -> BenchmarkSpec:
         lookback_business_days=b["momentum_lookback_business_days"],
         carry_kind=b["carry_measure"],
         r_multiple=cfg["labels"]["sl_multiple"],
-        rebalance_hour_utc=b["rebalance_hour_utc"],
+        rebalance_time_local=dt.time.fromisoformat(b["rebalance_time_local"]),
+        rebalance_timezone=b["rebalance_timezone"],
     )
 
 
@@ -263,7 +278,7 @@ def run_anchor(anchor: int, h1: dict[str, pl.DataFrame], d1: dict[str, pl.DataFr
                            st["atr"], costs[sym], spec))
 
     for day in days:
-        moment = dt.datetime.combine(day, dt.time(spec.rebalance_hour_utc), tzinfo=UTC)
+        moment = spec.moment_on(day)
         bars = {c: _bar_at(h1[pairs[c][0]], moment) for c in pairs}
         scores = ranking(day, d1, rates, pairs, spec)
         usable = (scores is not None

@@ -895,6 +895,39 @@ Tak ma być. Blokujemy transakcję, a transakcja zawiera się w chwili decyzji �
 
 ---
 
+## ADR-043 — Moment rebalansu koszyka: 16:00 Europe/London zamiast 00:00 UTC
+
+**Status:** ACCEPTED · 2026-09-20 · **Koryguje:** ADR-039, wiersz „Chwila decyzji” · **Dotyczy:** kontrola #5 z §10.2
+
+**Kontekst:** ADR-039 przyjął, że podportfel rebalansuje się w dniu kotwicy o **00:00 UTC**, a wejściem jest ostatni zamknięty bar H1 przed tą chwilą. Wybór był domyślny — 00:00 UTC to granica doby z `data.d1_boundary` — i nie był uzasadniany płynnością.
+
+Konsekwencja jest jednak taka, że koszyk transaguje w **najcieńszej godzinie każdej doby**. Decyzja o 00:00 UTC czyta bar 23:00 poprzedniego dnia, czyli godzinę po zamknięciu Nowego Jorku, kiedy Tokio jeszcze nie ruszyło. Dla kotwicy poniedziałkowej jest jeszcze gorzej: bar z niedzieli 23:00 to trzecia godzina tygodnia, otwarcie po weekendzie.
+
+**Osobna sprawa, już naprawiona:** w dry runie kotwica poniedziałkowa pomijała 16/16 tygodni, bo bar z niedzieli 23:00 nie miał `atr_d1_14`. To był objaw niedzielnych kikutów i usunął go ADR-041 (po nim wszystkie pięć kotwic pomija 0 tygodni). Ten ADR **nie dotyczy tamtej awarii** — dotyczy realizmu momentu transakcji, który zostaje problemem niezależnie od ATR.
+
+**Decyzja:**
+
+1. **Moment rebalansu: 16:00 czasu Europe/London** w dniu kotwicy. Wejściem nadal jest ostatni zamknięty bar H1 przed tą chwilą (`last_closed_bar`), bez zmian.
+
+2. **Trzymane jako czas lokalny + strefa, nigdy jako stały offset** (ADR-034 pkt 4). 16:00 w Londynie to 15:00 UTC latem i 16:00 UTC zimą; zapisanie stałego offsetu przesuwałoby moment o godzinę przez pół roku — dokładnie ten błąd, który przy EA_HICP_FLASH wyszedł na tickach.
+
+3. Pola w `validation.benchmark_carry_trend`: `rebalance_time_local: "16:00"` i `rebalance_timezone: "Europe/London"` zastępują `rebalance_hour_utc`.
+
+**Uzasadnienie wyboru godziny:** 16:00 w Londynie to **fixing WM/Reuters**, standardowy moment wyceny FX — po nim wyceniane są indeksy, fundusze i większość benchmarków walutowych. Przypada w nakładce sesji londyńskiej i nowojorskiej, czyli w najgłębszej płynności doby. Nie jest to wielkość dobrana przez nas pod wynik: to jedyna godzina w dobie FX, która ma status konwencji branżowej, i z tego samego powodu jest naturalnym momentem rebalansu dla koszyka, który ma być punktem odniesienia bez stopni swobody (ADR-019).
+
+**Czy ta zmiana zapada pod wpływem wyniku:** nie, i to trzeba zapisać wprost, bo koszyk ma już za sobą dwa dry runy. Powód zmiany — nierealistyczna płynność o 23:00 UTC — został zapisany w `CLAUDE.md` jako propozycja **przed** ADR-041 i przed powtórzeniem dry runu. Jedyne istniejące liczby koszyka pochodzą z czterech miesięcy (ΔSharpe −0,0728, potem −0,1932, CI95 w obu przypadkach obejmuje zero), są jawnie oznaczone jako pozbawione znaczenia i nie mogą służyć za podstawę czegokolwiek. Kierunek wpływu tej zmiany na ΔSharpe nie był i nie jest znany z góry.
+
+**Odrzucone:**
+
+- *Zostawić 00:00 UTC.* Spójne z granicą doby, ale każe benchmarkowi handlować w najcieńszej godzinie doby i ponosić spread szerszy, niż modeluje podłoga z ADR-024. To czyni koszyk sztucznie łatwiejszym do pobicia — czyli błąd optymistyczny dla H₁, zakazany kierunek (ADR-024).
+- *17:00 Nowy Jork (rollover).* Też konwencja, ale to moment naliczania swapu i rozszerzenia spreadu, a nie moment wyceny — V1a ma przeciwko niemu osobny warunek NO TRADE (`8_rollover`). Benchmark nie powinien celować w okno, którego strategia unika.
+- *Godzina jako stały offset UTC (15:00 albo 16:00).* Prostsze w kodzie, ale przez pół roku trafia o godzinę obok fixingu. ADR-034 pkt 4 tego zabrania.
+- *Osobna godzina per kotwica.* Dołożyłoby benchmarkowi pięć parametrów zamiast jednego. Cała wartość pięciu kotwic polega na usunięciu wyboru, a nie na pomnożeniu go.
+
+**Konsekwencje:** zmiana dotyczy `validation.benchmark_carry_trend`, sekcji **bez** `frozen: true`, więc `frozen_sha256` = `b77d0b69…` (po ADR-041) zostaje bez zmian. Żaden wynik nie wymaga przeliczenia — kontrola #5 nie została jeszcze policzona na niczym, co ma znaczenie. Pozostałe wiersze ADR-039 i całe ADR-040 obowiązują bez zmian.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
