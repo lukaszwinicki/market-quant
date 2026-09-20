@@ -36,32 +36,42 @@ release_times:
       2025-05-08 o 12:02 BST (https://www.bankofengland.co.uk/news/2025/may/statement-on-the-timing-of-the-mpr-and-mpc-minutes)
       — w oknie 30/120 min pomijalne.
     ticks: "GBPUSD M1 2016: największy ruch dnia 14.01 i 04.02 o 12:00 UTC (GMT), 14.04 o 11:00 UTC (BST) w top 2"
-    proposed_by: "cytaty ze stron BoE znalezione przez skrypt/Claude — do sprawdzenia przez użytkownika"
-    verified: false
+    proposed_by: "cytaty ze stron BoE (dziś i 2016 z Wayback); zweryfikowane przez użytkownika 2026-09-20"
+    verified: true
 
   EA_HICP_FLASH:                    # `eurostat`: komunikat podaje tylko datę
     local_time: "11:00"
-    timezone: "Europe/Brussels"
-    schedule_url: "https://ec.europa.eu/eurostat/news/release-calendar"
-    quote: null                     # kalendarz Eurostatu podaje godzinę dopiero od 2025
+    # Czas lokalny siedziby Eurostatu, NIE stały CET: przeliczenie idzie przez
+    # strefę z DST daty publikacji (tak działa `release_time` + `events_for`).
+    timezone: "Europe/Luxembourg"
+    schedule_url: "https://ec.europa.eu/eurostat/o/calendars/eventsJson"
+    quote: >-
+      {"start": "2025-04-01T11:00Z", "title": "Flash estimate inflation euro area", "allDay": true}
     evidence: >-
-      Kalendarz Eurostatu (eventsJson) dla 2025 podaje przy zdarzeniach „11:00”.
-      Dla lat wcześniejszych żadna strona ani PDF komunikatu nie podaje godziny.
-    ticks: "EURUSD M1 2016-02-29 (flash za luty): największy ruch dnia o 10:00 UTC = 11:00 CET"
-    proposed_by: "kalendarz Eurostatu 2025 + ticki — do potwierdzenia przez użytkownika"
-    verified: false
+      Kalendarz Eurostatu podaje godzinę dopiero dla 2025, ale rozstrzyga strefę: wszystkie
+      12 zdarzeń flash 2025 ma „11:00Z” — i zimowe, i letnie. Gdyby pole było w UTC, letnie
+      musiałyby mieć 09:00Z, więc „Z” jest mylące, a wartość jest czasem lokalnym.
+      Sondowane daty 2025 zgadzają się z kalendarzem co do jednej (12/12).
+    ticks: >-
+      EURUSD M1, zakres minuty / mediana dnia: dni zimowe (6) szczyt o 10:00 UTC = 7,3×
+      (pozostałe minuty ≤ 2,2×), dni letnie (8) szczyt o 09:00 UTC = 3,7× (≤ 1,8×).
+      Obie grupy to 11:00 lokalnie — stały CET dawałby latem 10:00 UTC.
+    proposed_by: "kalendarz Eurostatu 2025 + test na tickach; zweryfikowane przez użytkownika 2026-09-20"
+    verified: true
 
   ONS_BULLETIN:                     # `ons`: tylko styczeń 2016 (przed kalendarzem ONS)
     local_time: "09:30"
     timezone: "Europe/London"
     schedule_url: "https://www.ons.gov.uk/releasecalendar"
-    quote: null                     # brak zdania-konwencji; dowód poniżej
+    # Cytat dotyczy NAJBLIŻSZEJ publikacji tej serii, już objętej kalendarzem —
+    # dla stycznia 2016 kalendarz ONS nie ma wpisu, stąd osobna pozycja.
+    quote: "UK consumer price inflation: Jan 2016 — Release date: 16 February 2016 9:30am"
     evidence: >-
       Kalendarz ONS podaje 9:30 dla WSZYSTKICH 11 publikacji CPI i 9 rynku pracy luty–grudzień 2016
       (pierwsza zmiana na 7:00 w 2020). Biuletyny ze stycznia 2016 podają tylko datę (19.01 CPI, 20.01 praca).
     ticks: "GBPUSD M1: 2016-01-20 największy ruch o 09:30 UTC; 2016-01-19 09:30 w top 3"
-    proposed_by: "wnioskowanie z sąsiednich publikacji — wymaga cytatu źródła albo świadomej akceptacji"
-    verified: false
+    proposed_by: "wnioskowanie z sąsiednich publikacji; zaakceptowane przez użytkownika 2026-09-20"
+    verified: true
 
 fred_release_times:
   US_RETAIL_SALES:

@@ -249,8 +249,14 @@ per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier)
   komunikatu = `<title>EU Login`. Flash rozpoznaje tytuł („Euro area annual
   inflation …”, odczyt finalny brzmi inaczej i wypada w połowie miesiąca).
   Sondowanie kończy się na pierwszym trafieniu w miesiącu, brak trafienia
-  w całym oknie = błąd. 534 adresy w cache, więc powtórny przebieg jest bez
-  sieci. Godzina 11:00 CET z `calendar_times.yaml` (`verified: false`).
+  w całym oknie = błąd. ~550 adresów w cache, więc powtórny przebieg jest bez
+  sieci. Kontrola metody: dla 2025 (jedyny rok z kalendarzem Eurostatu)
+  sondowanie dało te same 12 dat co kalendarz. Godzina: 11:00 czasu
+  Europe/Luxembourg Z DST, nie stały CET — wyszło 71 zdarzeń o 09:00 UTC
+  (lato) i 49 o 10:00 UTC (zima). Rozstrzygnięte dwoma dowodami: kalendarz
+  2025 podaje „11:00Z” i zimą, i latem (więc to czas lokalny, nie UTC),
+  a na M1 EURUSD zakres minuty / mediana dnia daje 7,3× o 10:00 UTC w 6 dniach
+  zimowych i 3,7× o 09:00 UTC w 8 letnich (pozostałe minuty ≤ 2,2×).
   ec.europa.eu odpowiada 429 i zrywa połączenia — pauza 2,5 s i ponawianie
 - `src/strategy/v1a.py` — reguła V1a + NO TRADE wg ADR-033:
   `decision_frame()` (warunki per bar), `run_v1a()` (sekwencyjnie: limity
@@ -267,29 +273,25 @@ mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
 
-Kalendarz (2026-09-20): wszystkie 16 serii HIGH walut kohorty A mają moduł
-źródłowy i pobrane dane. Pokrycie pełne dla USD 6/6, JPY 2/2, AUD 2/2,
-CAD 2/2, EUR 2/3 (ECB); brakuje wyłącznie tego, co czeka na potwierdzenie
-godziny: BOE_RATE (83 posiedzenia sparsowane) i EA_HICP_FLASH (121 publikacji
-znalezionych), a UK_CPI/UK_LABOUR mają 11 zamiast 12 publikacji w 2016.
-CZEKA NA UŻYTKOWNIKA — trzy wpisy w `config/calendar_times.yaml`
-(`verified: false`, więc źródło nie wypuszcza zdarzeń i `coverage_gaps()`
-jest niepuste):
-- `BOE_RATE` — 12:00 Londyn. Cytaty: dziś „The Monetary Policy summary and
-  minutes are published at 12 noon on a Thursday eight times a year”;
-  2016 (Wayback) „The MPC's decisions on interest rates are announced on
-  a Thursday at 12 noon”. Ticki GBPUSD 2016 zgodne. Wyjątek 08.05.2025
-  (12:02) pomijalny w oknie 30/120.
-- `ONS_BULLETIN` — 9:30 Londyn, tylko dla stycznia 2016 (kalendarz ONS
-  zaczyna się w lutym 2016). Brak zdania-konwencji w źródle; dowód: wszystkie
-  publikacje luty–grudzień 2016 o 9:30, ticki GBPUSD 19–20.01.2016 o 9:30.
-- `EA_HICP_FLASH` — 11:00 CET. Kalendarz Eurostatu podaje godzinę dopiero
-  od 2025; ticki EURUSD 29.02.2016 (flash) szczyt M1 o 10:00 UTC = 11:00 CET.
-Po ustawieniu `verified: true`: `fetch_calendar.py --sources boe ons eurostat`
-(cache jest zbudowany, więc bez sieci dla boe/ons).
+Kalendarz (2026-09-20): KOMPLETNY dla kohorty A, 1740 zdarzeń, 16 serii,
+`coverage_gaps()` puste dla 2016–2025 (sprawdzane też przez `require_coverage()`).
+Per seria: FOMC 79, US_CPI 119, US_NFP 119, US_PCE 117, US_RETAIL_SALES 119,
+US_GDP_ADVANCE 40; ECB_RATE 80, ECB_PRESS_CONF 80, EA_HICP_FLASH 120;
+BOE_RATE 83, UK_CPI 120, UK_LABOUR 120; BOJ_RATE 79, JP_CPI 120;
+RBA_RATE 104, AU_CPI 41; BOC_RATE 80, CA_CPI 120.
+
+Trzy godziny, których źródła nie podają przy publikacji, są prerejestrowane
+w `config/calendar_times.yaml` i zweryfikowane przez użytkownika 2026-09-20
+(`verified: true`): BOE_RATE 12:00 Londyn, ONS_BULLETIN 9:30 Londyn (tylko
+styczeń 2016, przed startem kalendarza ONS), EA_HICP_FLASH 11:00
+Europe/Luxembourg. Każdy wpis niesie cytat, dowód i wynik testu na tickach.
+Wniosek metodologiczny: godzina jest trzymana jako czas lokalny + strefa,
+nigdy jako stały offset — dla HICP flash stały CET dawałby latem błąd godziny.
 
 Rok 2015 nie jest potrzebny (rozgrzewka; FOMC 2015 nie podaje godziny).
-Do zrobienia przy runnerze V1a: przerwać, gdy `coverage_gaps()` niepuste.
+Runner V1a ma wołać `require_coverage(events, symbole, start, end)` przed
+liczeniem czegokolwiek — brak serii wygląda w `blackout()` tak samo jak brak
+zdarzenia (ADR-032 pkt 4).
 Kopie z Wayback (`web.archive.org/web/<znacznik>id_/<adres>`) są używane
 tam, gdzie serwis blokuje skrypty (RBA) albo usunął pliki (roczne
 harmonogramy stat.go.jp) — treść jest wierną kopią strony oficjalnej,
@@ -324,11 +326,7 @@ powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Symulator jest
 już zwektoryzowany (~1,5 ms na transakcję), więc 7 lat nie wymaga dalszej
 optymalizacji przed bramką 0.
 
-Równolegle (nie czeka na dane): potwierdzić trzy godziny w
-`config/calendar_times.yaml` (BOE_RATE, ONS_BULLETIN, EA_HICP_FLASH) i
-przebiec `fetch_calendar.py --sources boe ons eurostat` — wtedy pokrycie
-kalendarza jest pełne. Klucz FRED od użytkownika (US_RETAIL_SALES ma
-osobne źródło `census`, więc `fred` służy już tylko do kontroli dat).
-Potem runner V1a na harnessie (`kind="strategy"`, `n_variants=7`) —
+Równolegle (nie czeka na dane): kalendarz jest skończony, więc następny
+krok bez danych to runner V1a na harnessie (`kind="strategy"`, `n_variants=7`) —
 uruchamiać dopiero po zamknięciu bramki 0 i przy pełnym pokryciu
 kalendarza. Potem bramka 1.
