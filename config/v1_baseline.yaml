@@ -478,10 +478,24 @@ validation:
     currencies: [EUR, GBP, JPY, AUD, CAD]   # vs USD; było 8
     long_top_n: 1                        # 1/5 ≈ proporcja 2/8 z §12
     short_bottom_n: 1
-    momentum_lookback_months: 3
-    rebalance: "weekly"
     stops: false
-    sizing: "equal_risk_atr"
+
+    # --- ADR-039: operacjonalizacja §12 ---------------------------------
+    # Pięć nakładających się portfeli zamiast jednego dnia rebalansu.
+    # Pojedyncza kotwica byłaby cichym stopniem swobody w benchmarku,
+    # którego jedyną zaletą wg ADR-019 jest ich brak.
+    rebalance_anchors: [Mon, Tue, Wed, Thu, Fri]
+    rebalance_hour_utc: 0                # decyzja z ostatniego zamkniętego bara H1
+    momentum_lookback_business_days: 63  # ≈ 3 miesiące (§12)
+    momentum_price: "bid_close"          # sygnał, nie fill — jedna strona
+    # 1 R = sl_multiple * atr_d1_14, czyli TA SAMA jednostka co w strategii.
+    # Koszyk nie ma stopu, ale porównanie w R wymaga wspólnej skali.
+    r_unit: "labels.sl_multiple * atr_d1_14"
+    trade_costs_on_rebalance_only: true  # waluta zostająca w koszyku nie jest
+                                         # przehandlowana ("znikomy obrót")
+    apply_blackout: false                # warunki NO TRADE należą do V1a
+    skip_week_on_missing_currency: true  # ranking 4 walut to inny koszyk
+    comparison: "daily_R, block bootstrap 20d, CI95 różnicy > 0"
     report_note: >
       Wynik porównania MUSI nieść zapis o zawężeniu (ADR-038 pkt 6)
       i przedział ufności różnicy, nie dwie liczby punktowe.
