@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import errno
 import gzip
+import http.client
 import json
 import logging
 import os
@@ -80,6 +82,12 @@ log = logging.getLogger("fetch_calendar")
 
 
 TRANSIENT_STATUS = {429, 502, 503, 504}     # limit tempa albo chwilowa awaria serwisu
+# Zerwane połączenie, odmowa, przekroczony czas — serwisy statystyczne robią to
+# przy dłuższym pobieraniu (Eurostat, Wayback). Błąd treści nie jest przejściowy.
+TRANSIENT_ERRORS = (ConnectionError, TimeoutError, http.client.RemoteDisconnected,
+                    http.client.IncompleteRead)
+# Chwilowy brak trasy do sieci (WSL potrafi tak mrugnąć) — też przejściowe.
+TRANSIENT_ERRNO = {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ETIMEDOUT, errno.ENETDOWN}
 
 
 def urlopen_retry(req: urllib.request.Request, timeout: int = 60) -> bytes:
@@ -88,11 +96,12 @@ def urlopen_retry(req: urllib.request.Request, timeout: int = 60) -> bytes:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
-        except (urllib.error.URLError, TimeoutError) as e:
-            transient = (isinstance(e, TimeoutError)
-                         or isinstance(getattr(e, "reason", None),
-                                       (ConnectionRefusedError, TimeoutError))
-                         or getattr(e, "code", None) in TRANSIENT_STATUS)
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
+            reason = getattr(e, "reason", e)
+            transient = (isinstance(e, TRANSIENT_ERRORS)
+                         or isinstance(reason, TRANSIENT_ERRORS)
+                         or getattr(e, "code", None) in TRANSIENT_STATUS
+                         or getattr(reason, "errno", None) in TRANSIENT_ERRNO)
             if not wait or not transient:
                 raise
             log.info("%s — ponawiam za %ds", e, wait)

@@ -240,13 +240,17 @@ per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier)
   w oknie −30/+120. Nadzwyczajne (16.03 i 22.05.2020) rozpoznane po
   zwrotach „Unscheduled Monetary Policy Meeting” / „brought forward” —
   w latach 2016–2025 żaden inny protokół ich nie ma; 2020 ma 7 planowych.
-  Źródło `eurostat` (`calendar_eurostat.py`): EA_HICP_FLASH. Kalendarz
-  Eurostatu sięga 2025, portlet listy daje 403, więc sondowane są trwałe
-  adresy `products-euro-indicators/w/2-DDMMYYYY-ap` (dni robocze 24. →
-  7. następnego miesiąca); brak komunikatu = `<title>EU Login`. Flash
-  rozpoznaje tytuł („Euro area annual inflation …”, odczyt finalny brzmi
-  inaczej). Godzina 11:00 CET z `calendar_times.yaml` (`verified: false`).
-  ec.europa.eu odpowiada 429 — pauza 2,5 s i ponawianie
+  Źródło `eurostat` (`calendar_eurostat.py`): EA_HICP_FLASH, 121 publikacji
+  (12 na każdy rok 2016–2025 + grudzień 2025 wydany w 2026, poza zakresem).
+  Kalendarz Eurostatu sięga 2025, portlet listy daje 403, więc sondowane są
+  trwałe adresy `products-euro-indicators/w/2-DDMMYYYY-<sufiks>` (dni robocze
+  24. → 7. następnego miesiąca, sufiksy ap/bp/cp — wyszło 106/14/1); brak
+  komunikatu = `<title>EU Login`. Flash rozpoznaje tytuł („Euro area annual
+  inflation …”, odczyt finalny brzmi inaczej i wypada w połowie miesiąca).
+  Sondowanie kończy się na pierwszym trafieniu w miesiącu, brak trafienia
+  w całym oknie = błąd. 534 adresy w cache, więc powtórny przebieg jest bez
+  sieci. Godzina 11:00 CET z `calendar_times.yaml` (`verified: false`).
+  ec.europa.eu odpowiada 429 i zrywa połączenia — pauza 2,5 s i ponawianie
 - `src/strategy/v1a.py` — reguła V1a + NO TRADE wg ADR-033:
   `decision_frame()` (warunki per bar), `run_v1a()` (sekwencyjnie: limity
   bloków walutowych, portfela, jedna pozycja na parę do `t1`), log decyzji
@@ -263,7 +267,10 @@ ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
 
 Kalendarz (2026-09-20): wszystkie 16 serii HIGH walut kohorty A mają moduł
-źródłowy. Pokrycie pełne dla USD 6/6, JPY 2/2, AUD 2/2, CAD 2/2.
+źródłowy i pobrane dane. Pokrycie pełne dla USD 6/6, JPY 2/2, AUD 2/2,
+CAD 2/2, EUR 2/3 (ECB); brakuje wyłącznie tego, co czeka na potwierdzenie
+godziny: BOE_RATE (83 posiedzenia sparsowane) i EA_HICP_FLASH (121 publikacji
+znalezionych), a UK_CPI/UK_LABOUR mają 11 zamiast 12 publikacji w 2016.
 CZEKA NA UŻYTKOWNIKA — trzy wpisy w `config/calendar_times.yaml`
 (`verified: false`, więc źródło nie wypuszcza zdarzeń i `coverage_gaps()`
 jest niepuste):
