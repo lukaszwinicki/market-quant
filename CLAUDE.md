@@ -109,11 +109,15 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 ## Stan
 
 Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
-w tle, wznawialne; 2026-09-20 było na 2017-09 (~25%; katalogi 2019–2020
-w EURUSD to próbki z testów dekodera). 18 godzin `failed` do dociągnięcia
-na końcu: `download_ticks.py --retry-failed`.
+w tle, wznawialne; 2026-09-20 14:48 UTC front na **2020-03-23** (~47%
+zakresu do 2025-12-31). Zmierzone tempo ~60–90 dni kalendarza na godzinę,
+niższe w latach o dużym obrocie. ETA: koniec 2021 (granica segmentu
+RESEARCH) ~10 h, koniec 2023 ~22 h, dziś ~38 h. **77** godzin `failed`
+do dociągnięcia na końcu (liczba rośnie w trakcie — sprawdzać
+w `data/raw/manifest.jsonl`, nie ufać tej notatce):
+`download_ticks.py --retry-failed`.
 
-Gotowe (344 testy):
+Gotowe (431 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -308,8 +312,11 @@ Ustalenia z danych:
   używać `effective_sample_size`, nie liczby wierszy.
 - Spready 2015 (mediana `spread_close`): EURUSD 0,3, USDJPY 0,4,
   pozostałe 0,8–1,2 pipsa. Podłoga 1,5 / 2,5 pipsa zwykle wiąże.
-- `data/raw/dukascopy/EURUSD/2019,2020` — 130 godzin próbek z testów
-  dekodera; poprawne, downloader je pominie.
+- `data/raw/dukascopy/EURUSD/2019,2020` — było 130 godzin próbek z testów
+  dekodera; NIEAKTUALNE, downloader przeszedł przez 2019 i 2020, wszystkie
+  pary mają komplet. Partycje barów zbudowane wtedy z tych próbek (118
+  barów H1 za 2019, 6 za 2020) zostały usunięte — to był cichy zaniżacz
+  próby, patrz `src/data/provenance.py`.
 
 - Wydajność (2026-09-20): ~1,5 ms na transakcję w najgorszym przypadku
   (pełne okno 10 dni = 14 tys. barów M1, żadna bariera nietrafiona);
@@ -321,6 +328,47 @@ Ustalenia z danych:
   bez zmian; test porównuje `_first_event` z naiwnym skanem na losowych
   ścieżkach (200 przypadków na stronę).
 
+- `src/data/provenance.py` + `require_fresh_bars()` w `harness/market.py` —
+  obok każdej partycji `source.json` z liczbą godzin cache, z których
+  powstała; runner odrzuca partycję zbudowaną z wycinka (`StaleBarsError`).
+  `scripts/gate0.py` woła to przed `start_run`, żeby nieudana próba nie
+  szła do `trials.jsonl`. Ucieczka: `--allow-stale-bars`
+- `src/validation/controls.py` — komplet kontroli #1, #2, #3, #7 (§10.2):
+  `shuffled_label_null()` (tasowanie WEWNĄTRZ grup (symbol, kierunek);
+  rozkład zerowy jest wyśrodkowany na średniej puli, nie na zerze),
+  `shift_features()` (tylko cechy modelujące, `atr_d1_14` nietknięte),
+  `permutation_max_drawdown()` (permutacja kolejności DNI, nie transakcji)
+- `src/validation/cost_sensitivity.py` — drabinka 1×/2×/3× (§9).
+  Symulator raportuje teraz `slippage` osobno (`slip_r` w etykiecie), więc
+  mnożnik skaluje cały modelowany koszt, nie sam spread. Przy 1× wynik
+  jest identyczny z `r` symulatora — pilnuje tego test. Podpięte do
+  raportu bramki 0
+- `src/data/rates.py` + `scripts/fetch_rates.py` — stopy z FRED,
+  `data/rates/fred.parquet`, raport `reports/rates_coverage.md`.
+  Overnight (OECD `IRSTCI01<ISO>M156N`) komplet 132/132 miesiące
+  2015–2025 dla całej kohorty A. `rate_on()` bierze miesiąc POPRZEDNI —
+  średnia stycznia nie jest znana w styczniu
+- `src/execution/financing.py` — swap FX (ADR-035): `rollover_days()`
+  ze środą liczoną potrójnie (tydzień = 1+1+3+1+1 = 7),
+  `financing_r()` kierunkowe, `apply_financing()` dokłada `financing_r`
+  i pomniejsza `r` (wynik sprzed korekty = `r + financing_r`).
+  Marża `costs.financing.cohort_a_markup_annual_pct: 1.0` to JEDYNA
+  liczba w modelu kosztów bez sparsowanego źródła — założenie modelowe,
+  ograniczane drabinką kosztową
+
+ADR-035: finansowanie kohorty A modelowane jawnie (pominięcie warte
+~0,13 R przy różnicy stóp 2,8 pp i stopie 1,1% ceny — więcej niż CAŁY
+próg bramki 2, i kierunkowe, więc podszywa się pod sygnał).
+ADR-036: FRED nie ma rentowności 2-letnich poza USD, więc benchmark
+carry + trend (§12, ADR-019) jest NIEWYKONALNY zgodnie ze spec.
+Zamiennik musi być prerejestrowany przed bramką 2 — nie teraz, żeby nie
+wybierać wejścia do benchmarku po zobaczeniu wyniku strategii.
+`frozen_sha256` bez zmian (`2eab678f…`) — `costs` nie jest zamrożone.
+
+Czego NADAL nie ma (spec wymaga): kontrole §10.2 nr 4, 5, 9, 10;
+benchmark carry + trend (§12, blokada z ADR-036); runner V1a i skrypty
+bramek 1–5; cała kohorta B.
+
 Następne (gdy pobieranie dojdzie do końca 2021): `download_ticks.py
 --retry-failed`, `build_bars.py`, potem `scripts/gate0.py` — przebieg
 zamykający bramkę 0 (nowy symulator, kryteria ADR-025; kolejna próba
@@ -328,6 +376,11 @@ w `trials.jsonl`). Sprawdzić w raporcie: liczbę „bez wyniku" (po ADR-026
 powinna spaść z ~1,2% prawie do zera) i połowę CI ≤ 0,05 R. Symulator jest
 już zwektoryzowany (~1,5 ms na transakcję), więc 7 lat nie wymaga dalszej
 optymalizacji przed bramką 0.
+
+Uwaga do `trials.jsonl`: jedyny wpis (`20260919T134506Z-c4710e`) powstał
+przed ADR-029 i nie ma pola `kind`, więc `n_trials()` liczy go jako próbę
+strategii (N = 1), choć był kontrolą. Zachowawczo — zawyża N, nie zaniża.
+`scripts/gate0.py` deklaruje już `kind="control"`.
 
 Równolegle (nie czeka na dane): kalendarz jest skończony, więc następny
 krok bez danych to runner V1a na harnessie (`kind="strategy"`, `n_variants=7`) —
