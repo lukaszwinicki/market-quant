@@ -10,13 +10,18 @@ wszystkiego w pamięci nic nie daje poza ryzykiem OOM.
     python scripts/build_bars.py --years 2015 2016    # wybrane lata
     python scripts/build_bars.py --no-report          # bez raportu jakości
 
-Można uruchamiać w trakcie pobierania — przetwarza to, co już jest.
+Można uruchamiać w trakcie pobierania — przetwarza to, co już jest. Obok
+każdej partycji ląduje `source.json` z liczbą godzin cache, z których
+powstała (`src/data/provenance.py`). Partycja zbudowana z wycinka jest
+potem odrzucana przez `require_fresh_bars()` w runnerach, więc niepełny
+przebieg nie zamieni się po cichu w niepełny wynik badawczy.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import logging
 import sys
 from collections import defaultdict
@@ -28,6 +33,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data.dukascopy import decode_bi5  # noqa: E402
+from src.data.provenance import write_provenance  # noqa: E402
 from src.data.quality import build_report, render_markdown  # noqa: E402
 from src.data.resample import (  # noqa: E402
     FREQ_H1, FREQ_M1, bars_from_ticks, ticks_to_frame, validate_bars,
@@ -68,14 +74,22 @@ def build_symbol(symbol: str, cache: Path, out: Path, years: set[int] | None) ->
 
     by_year_m1: dict[int, list[pl.DataFrame]] = defaultdict(list)
     by_year_h1: dict[int, list[pl.DataFrame]] = defaultdict(list)
+    # Proweniencja partycji (patrz `data/provenance.py`): ile niepustych
+    # plików cache i ile ticków poszło na dany rok. Liczymy pliki ZANIM
+    # cokolwiek odpadnie przy dekodowaniu — to ma odpowiadać na pytanie
+    # „z jakiego wycinka cache ta partycja powstała", nie „ile barów wyszło".
+    src_files: dict[int, int] = defaultdict(int)
+    src_ticks: dict[int, int] = defaultdict(int)
     n_ticks = 0
 
     for (year, month), paths in months.items():
+        src_files[year] += len(paths)
         blocks = [decode_bi5(p.read_bytes(), symbol, hour_of(p)) for p in paths]
         ticks = ticks_to_frame(blocks)
         if ticks.is_empty():
             continue
         n_ticks += ticks.height
+        src_ticks[year] += ticks.height
         by_year_m1[year].append(bars_from_ticks(ticks, FREQ_M1))
         by_year_h1[year].append(bars_from_ticks(ticks, FREQ_H1))
         log.debug("%s %04d-%02d: %d ticków", symbol, year, month, ticks.height)
@@ -90,8 +104,8 @@ def build_symbol(symbol: str, cache: Path, out: Path, years: set[int] | None) ->
         h1 = _merge(pl.concat(by_year_h1[year]))
         validate_bars(m1)
         validate_bars(h1)
-        _write(out / "m1", symbol, year, m1)
-        _write(out / "h1", symbol, year, h1)
+        _write(out / "m1", symbol, year, m1, "m1", src_files[year], src_ticks[year])
+        _write(out / "h1", symbol, year, h1, "h1", src_files[year], src_ticks[year])
         h1_all.append(h1)
         log.info("%s %d: M1=%d H1=%d barów", symbol, year, m1.height, h1.height)
 
@@ -116,10 +130,13 @@ def _merge(bars: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _write(base: Path, symbol: str, year: int, bars: pl.DataFrame) -> None:
+def _write(base: Path, symbol: str, year: int, bars: pl.DataFrame, freq: str,
+           n_source_files: int, n_ticks: int) -> None:
     d = base / f"symbol={symbol}" / f"year={year}"
     d.mkdir(parents=True, exist_ok=True)
     bars.write_parquet(d / "bars.parquet", compression="zstd")
+    write_provenance(d, symbol=symbol, year=year, freq=freq,
+                     n_source_files=n_source_files, n_ticks=n_ticks)
 
 
 def main() -> int:

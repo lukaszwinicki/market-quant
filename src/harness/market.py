@@ -8,6 +8,18 @@ tego w miejscu, przez które przechodzi każdy odczyt M1: zakres dotykający
 poda `unseal=True`. Dotyczy to też transakcji z końca 2023 r., których
 horyzont 10 dni sięga w styczeń 2024 — ich rozstrzygnięcie to już ceny
 z hold-outu.
+
+ŚWIEŻOŚĆ PARTYCJI
+
+`require_fresh_bars()` sprawdza, czy partycje barów zostały zbudowane
+z całego cache, który jest teraz na dysku. Wołać PRZED liczeniem
+czegokolwiek — dokładnie tak jak `require_coverage()` dla kalendarza.
+Powód i tryb awarii: `data/provenance.py`.
+
+Sprawdzenie jest OSOBNE, nie wbudowane w `load_m1`. Partycja zbudowana
+w trakcie pobierania jest poprawna jako dane, tylko niekompletna jako
+próba badawcza — i to runner, nie funkcja odczytu, wie, czy właśnie
+liczy wynik do raportu, czy ogląda dane.
 """
 
 from __future__ import annotations
@@ -18,6 +30,7 @@ from pathlib import Path
 import polars as pl
 
 from ..data.dukascopy import pip_size
+from ..data.provenance import count_cache_hours, read_provenance
 from ..data.resample import BAR_SCHEMA
 from ..execution.simulator import CostModel
 
@@ -25,10 +38,15 @@ UTC = dt.timezone.utc
 ROOT = Path(__file__).resolve().parents[2]
 BARS_M1 = ROOT / "data" / "bars" / "m1"
 BARS_H1 = ROOT / "data" / "bars" / "h1"
+TICK_CACHE = ROOT / "data" / "raw" / "dukascopy"
 
 
 class SealedHoldoutError(RuntimeError):
     """Próba odczytu zapieczętowanego hold-outu przed bramką 4."""
+
+
+class StaleBarsError(RuntimeError):
+    """Partycja barów nie odpowiada temu, co jest w cache ticków."""
 
 
 def sealed_range(cfg: dict) -> tuple[dt.datetime, dt.datetime]:
@@ -75,6 +93,57 @@ def _load_bars(symbol: str, start: dt.datetime, end: dt.datetime, cfg: dict,
         .sort("ts")
         .collect()
     )
+
+
+def stale_partitions(symbols: list[str], start: dt.datetime, end: dt.datetime, *,
+                     cache: Path = TICK_CACHE,
+                     roots: dict[str, Path] | None = None) -> list[str]:
+    """Opisy partycji, które nie odpowiadają cache'owi ticków.
+
+    Partycja jest nieświeża, gdy dla (symbol, rok) w cache są NIEPUSTE pliki,
+    a partycja: nie istnieje, nie ma `source.json`, albo została zbudowana
+    z mniejszej liczby plików, niż cache trzyma teraz.
+
+    Więcej plików w partycji niż w cache to nie awaria — cache bywa
+    przycinany, a bary są trwałe. Interesuje nas wyłącznie kierunek
+    „bary powstały z wycinka".
+    """
+    roots = roots or {"m1": BARS_M1, "h1": BARS_H1}
+    out: list[str] = []
+    for symbol in symbols:
+        for year in range(start.year, end.year + 1):
+            have = count_cache_hours(cache, symbol, year)
+            if not have:
+                continue            # nic w cache za ten rok — nie ma co budować
+            for freq, root in sorted(roots.items()):
+                part = root / f"symbol={symbol}" / f"year={year}"
+                if not (part / "bars.parquet").exists():
+                    out.append(f"{symbol} {year} {freq}: brak partycji, "
+                               f"a cache ma {have} godzin")
+                    continue
+                prov = read_provenance(part)
+                if prov is None:
+                    out.append(f"{symbol} {year} {freq}: partycja bez "
+                               f"source.json — nieznane pochodzenie")
+                elif prov["n_source_files"] < have:
+                    out.append(f"{symbol} {year} {freq}: zbudowana z "
+                               f"{prov['n_source_files']} godzin, cache ma {have}")
+    return out
+
+
+def require_fresh_bars(symbols: list[str], start: dt.datetime, end: dt.datetime, *,
+                       cache: Path = TICK_CACHE,
+                       roots: dict[str, Path] | None = None) -> None:
+    """Rzuć `StaleBarsError`, jeżeli którakolwiek partycja jest nieświeża.
+
+    Wołane przez runnery przed liczeniem wyniku. Naprawa to zawsze
+    `python scripts/build_bars.py`.
+    """
+    bad = stale_partitions(symbols, start, end, cache=cache, roots=roots)
+    if bad:
+        raise StaleBarsError(
+            "partycje barów nie odpowiadają cache ticków — uruchom "
+            "scripts/build_bars.py:\n  " + "\n  ".join(bad))
 
 
 def is_cross(symbol: str) -> bool:

@@ -31,7 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.data.dukascopy import pip_size  # noqa: E402
 from src.data.quality import build_report  # noqa: E402
 from src.features.technical import compute_features  # noqa: E402
-from src.harness.market import cost_model_for, load_h1, load_m1  # noqa: E402
+from src.harness.market import (  # noqa: E402
+    cost_model_for, load_h1, load_m1, require_fresh_bars,
+)
 from src.harness.registry import start_run  # noqa: E402
 from src.validation.gate0 import (  # noqa: E402
     Check, Gate0Result, assess, balanced_counts, contiguous_end, eligible_candidates,
@@ -72,6 +74,9 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--boot-reps", type=int, help="domyślnie validation.bootstrap")
+    ap.add_argument("--allow-stale-bars", action="store_true",
+                    help="policz mimo partycji niezgodnych z cache ticków "
+                         "(wynik NIE zamyka bramki)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                         datefmt="%H:%M:%S")
@@ -83,6 +88,13 @@ def main() -> int:
     split_end = day(research["end"]) + dt.timedelta(days=1) - dt.timedelta(minutes=1)
     boot = cfg["validation"]["bootstrap"]
     spec = label_spec_from(cfg)
+
+    # Bary muszą pochodzić z całego cache, który jest na dysku. Partycja
+    # zbudowana z wycinka wygląda jak poprawne dane i cicho zaniża próbę —
+    # patrz `src/data/provenance.py`. Sprawdzane PRZED `start_run`, żeby
+    # nieudana próba nie zaśmiecała `trials.jsonl`.
+    if not args.allow_stale_bars:
+        require_fresh_bars(symbols, start, args.end or split_end)
 
     # Koniec wspólny dla wszystkich par: ta sama oś dni w bootstrapie
     # i ten sam okres w porównaniu między parami.
