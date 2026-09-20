@@ -109,10 +109,10 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 ## Stan
 
 Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
-w tle, wznawialne; 2026-09-20 front na **2021-02-12** (~58% zakresu do
+w tle, wznawialne; 2026-09-20 front na **2021-06-07** (~60% zakresu do
 2025-12-31). Zmierzone tempo ~60–90 dni kalendarza na godzinę, niższe
 w latach o dużym obrocie. ETA: koniec 2021 (granica segmentu RESEARCH)
-~4 h, koniec 2023 ~16 h, dziś ~32 h. **87** godzin `failed` do dociągnięcia
+~2–3 h, koniec 2023 ~14 h, dziś ~30 h. **87** godzin `failed` do dociągnięcia
 na końcu (liczba rośnie w trakcie — sprawdzać w `data/raw/manifest.jsonl`,
 nie ufać tej notatce): `download_ticks.py --retry-failed`.
 
