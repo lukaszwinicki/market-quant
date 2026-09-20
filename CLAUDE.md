@@ -399,6 +399,22 @@ uniwersum 5 walut kohorty A vs USD (EUR, GBP, JPY, AUD, CAD), long top-1
 NIE jest zamrożona, `frozen_sha256` bez zmian (`2eab678f…`).
 Cechy V1b `carry_2y`/`d_carry_20d` NIE są objęte ADR-038.
 
+ADR-039 operacjonalizuje §12 (to, czym ADR-033 był dla V1a) — spisany PRZED
+kodem i przed jakimkolwiek wynikiem strategii. Kluczowe: rebalans to PIĘĆ
+nakładających się portfeli (kotwica pon–pt, wynik = średnia), bo pojedynczy
+dzień byłby cichym stopniem swobody w benchmarku, którego jedyną zaletą wg
+ADR-019 jest ich brak; `1 R = sl_multiple × atr_d1_14`, czyli TA SAMA
+jednostka co w strategii (przy `1 × ATR` koszyk miałby wynik zawyżony 2×);
+suma w rankingu dosłowna — zmierzone na 17 czystych tygodniach 2016, że
+zwrot 3M ma 4,2× większy rozrzut przekrojowy niż carry (SD 3,61% vs 0,86 pp),
+więc ranking jest zdominowany przez momentum, a carry rozstrzyga remisy;
+koszty tylko przy ZMIANIE pozycji plus finansowanie za każdy dzień; blackout
+i warunki NO TRADE V1a NIE są przenoszone na koszyk; tydzień bez kompletu
+5 walut pomijany w całości; przebieg to `kind="control"`, więc nie podnosi N.
+Kryterium „pobity” jest ostrzejsze niż dosłowne §10.2: CI95 bootstrapu
+blokowego RÓŻNICY dziennych R (strategia − koszyk) w całości powyżej zera.
+Parametry w `validation.benchmark_carry_trend`, `frozen_sha256` bez zmian.
+
 - `src/strategy/runner.py` + `scripts/run_v1a.py` — runner V1a, GOTOWY,
   ale na prawdziwych danych jeszcze NIE uruchomiony jako próba.
   Kolejność: `preflight()` (pokrycie kalendarza + stóp; waluty z par
