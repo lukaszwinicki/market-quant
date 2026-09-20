@@ -63,6 +63,7 @@ from ..execution.financing import apply_financing, markup_from, markup_grid_from
 from ..execution.simulator import CostModel
 from ..features.technical import compute_features
 from ..labels.triple_barrier import effective_sample_size, overlap_fraction
+from ..validation.benchmark import Comparison
 from ..validation.bootstrap import BootstrapResult, block_bootstrap_expectancy, business_day
 from ..validation.controls import (
     counts_from, empirical_p_value, permutation_max_drawdown, shift_features,
@@ -382,6 +383,18 @@ def shifted_baseline(params: V1aParams, features: dict[str, pl.DataFrame],
 # --- ocena --------------------------------------------------------------------
 
 @dataclass
+class Benchmark:
+    """Kontrola #5: koszyk §12 policzony wg ADR-038/039/040, albo jego brak."""
+    comparison: Comparison | None = None
+    per_anchor: dict[int, float] = field(default_factory=dict)   # kotwica → E[R]
+    anchor_stats: list[dict] = field(default_factory=list)
+
+    @property
+    def computed(self) -> bool:
+        return self.comparison is not None
+
+
+@dataclass
 class Assessment:
     baseline: Variant
     variants: list[Variant]
@@ -398,6 +411,7 @@ class Assessment:
     overlap: float
     effective_n: int
     controls: Controls
+    benchmark: Benchmark
     checks: list[Check]
 
     @property
@@ -407,8 +421,9 @@ class Assessment:
 
 def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
            controls: Controls, *, block_days: int, boot_reps: int, seed: int,
-           cpcv: CPCVSpec) -> Assessment:
-    """Wszystkie metryki bramki 2, jakie da się policzyć bez benchmarku §12."""
+           cpcv: CPCVSpec, benchmark: Benchmark | None = None) -> Assessment:
+    """Metryki bramki 2. Bez `benchmark` werdykt jest NIEPEŁNY (brak kontroli #5)."""
+    benchmark = benchmark or Benchmark()
     base = next(v for v in variants if v.name == "baseline")
     trades = base.trades
     if not trades.height:
@@ -467,6 +482,7 @@ def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
               subs_positive >= th["min_subperiods_positive"],
               " · ".join(f"{lab}: {m:+.4f}" for lab, _, m in subs)),
         plateau_check(variants),
+        benchmark_check(benchmark),
     ]
 
     return Assessment(
@@ -474,14 +490,32 @@ def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
         dsr=dsr, pbo=pbo, split_r=split_expectancies(trades, cpcv),
         purge_share=purged, embargo_share=embargoed, subperiods=subs,
         per_symbol=per_symbol, overlap=overlap_fraction(trades), effective_n=eff_n,
-        controls=controls, checks=checks,
+        controls=controls, benchmark=benchmark, checks=checks,
     )
+
+
+def benchmark_check(b: Benchmark) -> Check:
+    """Kontrola #5 (ADR-040): CI95 różnicy Sharpe'ów w całości powyżej zera.
+
+    Nie policzony koszyk to NIE jest zaliczona kontrola. Brak liczby zostaje
+    brakiem, a nie domyślnym „przeszło" — ADR-036 pkt 1.
+    """
+    if not b.computed:
+        return Check("kontrola #5: koszyk carry + trend (§12) pobity", False,
+                     "NIE POLICZONY — werdykt bramki 2 jest niepełny (ADR-036)")
+    c = b.comparison
+    return Check(
+        "kontrola #5: koszyk carry + trend (§12) pobity", c.beaten,
+        f"ΔSharpe {c.difference:+.4f}, CI95 [{c.ci_low:+.4f}, {c.ci_high:+.4f}]; "
+        f"strategia {c.strategy_sharpe:+.4f} przy {c.strategy_open_risk_r:.2f} R "
+        f"otwartego ryzyka, koszyk {c.benchmark_sharpe:+.4f} przy "
+        f"{c.benchmark_open_risk_r:.2f} R")
 
 
 # --- raport -------------------------------------------------------------------
 
-# ADR-036 pkt 1 i ADR-038 pkt 6: milczenie o nieliczonym benchmarku jest
-# gorsze niż brak liczby. Zdanie jest przypięte testem.
+# ADR-036 pkt 1 i ADR-038 pkt 6: milczenie o benchmarku jest gorsze niż brak
+# liczby. Jedno z tych zdań trafia do KAŻDEGO raportu; oba są przypięte testem.
 BENCHMARK_NOTE = (
     "**Benchmark obowiązkowy z §12 (koszyk carry + trend, kontrola #5) NIE ZOSTAŁ "
     "POLICZONY.** Rentowności 2-letnich nie ma w jednej definicji dla ośmiu walut "
@@ -490,8 +524,18 @@ BENCHMARK_NOTE = (
     "jeszcze nie ma. Werdykt bramki 2 bez tej kontroli jest NIEPEŁNY."
 )
 
+BENCHMARK_NARROWED = (
+    "**Koszyk §12 jest ZAWĘŻONY względem specyfikacji** (ADR-038): carry mierzy "
+    "`interbank_3m`, nie `yield_2y` — tej serii nie ma w jednej definicji dla "
+    "ośmiu walut (`reports/yield2y_sources.md`); uniwersum to pięć walut kohorty "
+    "A vs USD zamiast ośmiu, bo NZDUSD i USDCHF nie są pobierane, a CHF jest "
+    "wykluczony w sekcji `instruments` z `frozen: true`. Nogi: long top-1, "
+    "short bottom-1. Prior z literatury dotyczy koszyków G10 i stosuje się do "
+    "tego koszyka słabiej."
+)
+
 MISSING_CONTROLS = (
-    "Nie są liczone także kontrole §10.2 nr 4 (buy & hold / carry-only), "
+    "Nie są liczone kontrole §10.2 nr 4 (buy & hold / carry-only), "
     "9 (buy & hold per instrument) i 10 (rozkład zerowy per kohorta)."
 )
 
@@ -527,11 +571,11 @@ def render(run_id: str, params: dict, a: Assessment) -> str:
            "do `trials.jsonl`, więc NIE jest próbą i nie podnosi N w DSR. "
            "Ten wynik nie jest wynikiem badawczym.", ""]
           if params.get("dry_run") else []),
-        BENCHMARK_NOTE,
+        BENCHMARK_NARROWED if a.benchmark.computed else BENCHMARK_NOTE,
         "",
         MISSING_CONTROLS,
         "",
-        "## Kryteria bramki 2 (bez kontroli #5)",
+        "## Kryteria bramki 2" + ("" if a.benchmark.computed else " (bez kontroli #5)"),
         "",
         "| Kryterium | Wynik | Szczegóły |",
         "|---|---|---|",
@@ -649,5 +693,50 @@ def render(run_id: str, params: dict, a: Assessment) -> str:
         "zerze — pytanie brzmi „czy wybór jest lepszy niż losowy”, a nie „czy "
         "wynik jest dodatni”.",
         "",
+        *_benchmark_section(a.benchmark),
     ]
     return "\n".join(lines) + "\n"
+
+
+def _benchmark_section(b: Benchmark) -> list[str]:
+    """Sekcja kontroli #5 — z obowiązkami raportowymi z ADR-040 pkt 4 i 5."""
+    if not b.computed:
+        return ["## Kontrola #5 — koszyk carry + trend (§12)", "", BENCHMARK_NOTE, ""]
+    c = b.comparison
+    lines = [
+        "## Kontrola #5 — koszyk carry + trend (§12)",
+        "",
+        f"Werdykt: **{'POBITY' if c.beaten else 'NIE POBITY'}** — "
+        f"ΔSharpe {c.difference:+.4f}, CI95 [{c.ci_low:+.4f}, {c.ci_high:+.4f}] "
+        f"({c.n_days} dni, {c.n_reps} replikacji; te same bloki dla obu serii).",
+        "",
+        "| | Sharpe | średnie dzienne R | średnie otwarte ryzyko |",
+        "|---|---|---|---|",
+        f"| V1a | {c.strategy_sharpe:+.4f} | {c.strategy_mean_daily_r:+.4f} | "
+        f"{c.strategy_open_risk_r:.2f} R |",
+        f"| koszyk §12 | {c.benchmark_sharpe:+.4f} | {c.benchmark_mean_daily_r:+.4f} | "
+        f"{c.benchmark_open_risk_r:.2f} R |",
+        "",
+        "Kryterium jest bezskalowe (Sharpe), bo obie serie chodzą na różnych "
+        "budżetach ryzyka — kolumna „otwarte ryzyko” pokazuje, jak bardzo. "
+        "Porównanie średnich dziennych R faworyzowałoby stronę o większej "
+        "ekspozycji bez żadnej przewagi (ADR-040).",
+        "",
+        "### Per kotwica rebalansu (ADR-039, ADR-040 pkt 5)",
+        "",
+        "| Kotwica | E[R] na transakcję | rebalansów | pominiętych tygodni | transakcji |",
+        "|---|---|---|---|---|",
+    ]
+    names = {0: "poniedziałek", 1: "wtorek", 2: "środa", 3: "czwartek", 4: "piątek"}
+    for st in b.anchor_stats:
+        a_id = st["anchor"]
+        lines.append(f"| {names.get(a_id, a_id)} | {b.per_anchor.get(a_id, float('nan')):+.4f} "
+                     f"| {st['n_rebalances']} | {st['n_skipped']} | {st['n_trades']} |")
+    lines += [
+        "",
+        "Rozrzut między kotwicami to JEDYNA kontrola wrażliwości, jaką ten koszyk "
+        "ma — V1a ma siatkę z ADR-028, koszyk nie ma nic. Wynik koszyka jest "
+        "średnią z pięciu podportfeli, każdy z piątą częścią kapitału.",
+        "",
+    ]
+    return lines

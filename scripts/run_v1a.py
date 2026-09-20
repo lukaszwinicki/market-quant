@@ -32,16 +32,19 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data.calendar import load_calendar  # noqa: E402
-from src.execution.financing import markup_from  # noqa: E402
+from src.execution.financing import apply_financing, markup_from  # noqa: E402
 from src.harness.market import (  # noqa: E402
     cost_model_for, load_h1, load_m1, require_fresh_bars,
 )
 from src.harness.registry import ROOT as REPO, TRIALS_FILE, n_trials, start_run  # noqa: E402
 from src.strategy.runner import (  # noqa: E402
-    Window, assess, evaluators, feature_sets, preflight, render, run_controls,
-    run_variant, shifted_baseline,
+    Benchmark, Window, assess, evaluators, feature_sets, preflight, render,
+    run_controls, run_variant, shifted_baseline,
 )
 from src.strategy.v1a import grid_from, rules_from  # noqa: E402
+from src.validation.benchmark import (  # noqa: E402
+    compare, daily_series, run_benchmark, spec_from,
+)
 from src.validation.cpcv import CPCVSpec  # noqa: E402
 from src.validation.gate0 import eligible_candidates, label_spec_from  # noqa: E402
 
@@ -80,6 +83,9 @@ def main() -> int:
     ap.add_argument("--allow-stale-bars", action="store_true",
                     help="policz mimo partycji zbudowanych z wycinka cache "
                          "(wynik NIE jest wynikiem badawczym)")
+    ap.add_argument("--no-benchmark", action="store_true",
+                    help="pomiń kontrolę #5 (koszyk §12). Raport oznaczy werdykt "
+                         "jako NIEPEŁNY — do użytku tylko przy diagnostyce")
     ap.add_argument("--dry-run", metavar="KATALOG", type=Path,
                     help="sprawdzenie okablowania: przebieg zapisuje się do "
                          "KATALOGU i NIE dopisuje próby do trials.jsonl, "
@@ -189,9 +195,37 @@ def main() -> int:
         controls.shifted_trades = shifted.trades.height
         log.info("kontrole gotowe, %.0f s", time.monotonic() - t0)
 
+        # Kontrola #5: koszyk carry + trend (§12, ADR-038/039/040). Liczony
+        # w TYM przebiegu, bo porównanie wymaga wspólnej osi dni; koszyk sam
+        # w sobie jest wejściem niezależnym od sygnału, więc nie podnosi N.
+        benchmark = Benchmark()
+        if not args.no_benchmark:
+            bspec = spec_from(cfg)
+            # Koszyk potrzebuje `atr_d1_14`, więc dostaje ramki z cechami,
+            # a nie surowe bary. ATR nie zależy od kanału Donchiana, więc
+            # którakolwiek ramka siatki daje te same wartości.
+            bars = features[base.params.donchian_lookback]
+            per_anchor, anchor_stats = run_benchmark(
+                bars, rates, costs, symbols, bspec, window.trade_start,
+                window.split_end)
+            per_anchor = {a: (apply_financing(f, rates, markup) if f.height else f)
+                          for a, f in per_anchor.items()}
+            _, strat_daily, bench_daily = daily_series(base.trades, per_anchor)
+            benchmark = Benchmark(
+                comparison=compare(strat_daily, bench_daily, base.trades,
+                                   list(per_anchor.values()),
+                                   block_days=params["block_days"],
+                                   n_reps=params["boot_reps"], seed=args.seed),
+                per_anchor={a: (float(f["r"].mean()) if f.height else float("nan"))
+                            for a, f in per_anchor.items()},
+                anchor_stats=anchor_stats)
+            log.info("koszyk §12: ΔSharpe %+.4f, CI95 [%+.4f, %+.4f], %.0f s",
+                     benchmark.comparison.difference, benchmark.comparison.ci_low,
+                     benchmark.comparison.ci_high, time.monotonic() - t0)
+
         result = assess(variants, cfg, window, n_trials(REPO / TRIALS_FILE), controls,
                         block_days=params["block_days"], boot_reps=params["boot_reps"],
-                        seed=args.seed, cpcv=cpcv)
+                        seed=args.seed, cpcv=cpcv, benchmark=benchmark)
 
         base.trades.write_parquet(run.dir / "trades.parquet")
         base.decisions.write_parquet(run.dir / "decisions.parquet")
@@ -200,7 +234,7 @@ def main() -> int:
 
         run.record(
             passed_computed_criteria=result.passed,
-            benchmark_section_12_computed=False,          # ADR-036, ADR-038
+            benchmark_section_12_computed=benchmark.computed,   # ADR-038/039/040
             expectancy_r=result.bootstrap.expectancy,
             expectancy_ci=[result.bootstrap.ci_low, result.bootstrap.ci_high],
             t_stat=result.bootstrap.t_stat,

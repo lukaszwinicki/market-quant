@@ -16,9 +16,10 @@ from src.data.rates import SCHEMA as RATE_SCHEMA
 from src.execution.simulator import CostModel
 from src.labels.triple_barrier import LabelSpec
 from src.strategy.runner import (
-    BENCHMARK_NOTE, Variant, Window, control_pool, daily_matrix, decision_summary,
-    evaluators, feature_sets, plateau_check, preflight, render, run_variant,
-    shifted_baseline, split_expectancies, subperiod_expectancies,
+    BENCHMARK_NARROWED, BENCHMARK_NOTE, Controls, Variant, Window, control_pool,
+    daily_matrix, decision_summary, evaluators, feature_sets, plateau_check,
+    preflight, render, run_variant, shifted_baseline, split_expectancies,
+    subperiod_expectancies,
 )
 from src.strategy.v1a import Rules, V1aParams
 from src.validation.cpcv import CPCVSpec
@@ -447,7 +448,12 @@ def test_full_grid_runs_end_to_end_and_renders_a_report(e2e):
     result = assess(variants, cfg, window, n_trials=7, controls=controls,
                     block_days=5, boot_reps=200, seed=1, cpcv=CPCVSpec(6, 2, 0, 0))
 
-    assert len(result.checks) == 9
+    assert len(result.checks) == 10
+    # Bez policzonego koszyka kontrola #5 MUSI wypaść na czerwono — brak
+    # liczby nie może być domyślnym „przeszło" (ADR-036 pkt 1).
+    fifth = [c for c in result.checks if "#5" in c.name]
+    assert len(fifth) == 1 and not fifth[0].passed
+    assert not result.benchmark.computed
     assert len(result.costs) == 3 and len(result.markups) == 3
     assert result.effective_n <= base.trades.height
     assert 0.0 <= result.dsr.dsr <= 1.0
@@ -463,8 +469,59 @@ def test_full_grid_runs_end_to_end_and_renders_a_report(e2e):
     report = render("test-run", params, result)
     for section in ("Kryteria bramki 2", "Log decyzji", "Koszt 1×, 2×, 3×",
                     "Oś marży swapu", "Warianty siatki", "CPCV", "Podokresy",
-                    "Kontrole §10.2"):
+                    "Kontrole §10.2", "Kontrola #5"):
         assert section in report
     assert BENCHMARK_NOTE in report
     # Ścieżki CPCV są zdegenerowane przy regule nieuczonej — raport ma to mówić.
     assert "zdegenerowane" in report
+
+
+def test_report_swaps_the_note_when_the_benchmark_is_computed(e2e):
+    """Policzony koszyk zdejmuje notkę „nie policzony", ale NIE notkę o zawężeniu.
+
+    ADR-038 pkt 6: każdy raport powołujący się na §12 musi mówić, że koszyk
+    jest węższy niż ten, który uzasadniał ADR-019.
+    """
+    from src.strategy.runner import Benchmark, assess, benchmark_check
+    from src.validation.benchmark import Comparison
+
+    c = Comparison(strategy_sharpe=0.20, benchmark_sharpe=0.05, difference=0.15,
+                   ci_low=0.02, ci_high=0.28, strategy_mean_daily_r=0.03,
+                   benchmark_mean_daily_r=0.01, strategy_open_risk_r=4.38,
+                   benchmark_open_risk_r=2.0, n_days=200, n_reps=400)
+    bench = Benchmark(comparison=c, per_anchor={a: 0.01 * a for a in range(5)},
+                      anchor_stats=[{"anchor": a, "n_rebalances": 40,
+                                     "n_skipped": 1, "n_trades": 12}
+                                    for a in range(5)])
+    assert benchmark_check(bench).passed          # CI95 w całości > 0
+
+    grid, market_, costs, features, window, rates_all = e2e
+    evals = evaluators(grid, market_, costs, RULES.horizon_business_days)
+    variants = [
+        run_variant(p, features[p.donchian_lookback], RULES, NO_EVENTS, window,
+                    evals[(p.sl_multiple, p.tp_multiple, RULES.horizon_business_days)],
+                    rates_all, 0.5)
+        for p in grid
+    ]
+    cfg = {
+        "validation": {"acceptance_thresholds": {
+            "expectancy_net_R_min": 0.10, "t_stat_min": 2.0,
+            "deflated_sharpe_min": 0.95, "pbo_max": 0.30,
+            "positive_at_cost_multiple": 2.0, "min_instruments_positive": 2,
+            "min_subperiods_positive": 2}},
+        "costs": {"sensitivity_multipliers": [1.0, 2.0, 3.0],
+                  "financing": {"cohort_a_markup_annual_pct": 0.5,
+                                "cohort_a_markup_sensitivity": [0.5, 1.0, 2.0]}},
+    }
+    result = assess(variants, cfg, window, n_trials=7, controls=Controls(),
+                    block_days=5, boot_reps=200, seed=1, cpcv=CPCVSpec(6, 2, 0, 0),
+                    benchmark=bench)
+    params = {"symbols": list(E2E_SYMBOLS), "data_start": window.data_start,
+              "trade_start": window.trade_start, "split_end": window.split_end}
+    report = render("test-run", params, result)
+
+    assert BENCHMARK_NOTE not in report
+    assert BENCHMARK_NARROWED in report
+    assert "otwartego ryzyka" in report or "otwarte ryzyko" in report
+    assert "4.38 R" in report and "2.00 R" in report     # ADR-040 pkt 4
+    assert "poniedziałek" in report and "piątek" in report   # ADR-040 pkt 5
