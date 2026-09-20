@@ -765,6 +765,49 @@ To ten sam zabieg, co ADR-033 dla reguły V1a: jeden ADR, który czyta niejednoz
 
 ---
 
+## ADR-040 — Kontrola #5 rozstrzygana po Sharpie, nie po średniej dziennej R
+
+**Status:** ACCEPTED · 2026-09-20 · **Koryguje:** ADR-039, wiersze „Oś porównania” i „Kryterium »pobity«” · **Dotyczy:** §10.2 #5, ADR-019
+
+**Kontekst:** ADR-039 przyjął, że kontrolę #5 rozstrzyga różnica ŚREDNICH dziennych R między strategią a koszykiem. To porównanie jest przechylone, bo obie serie nie chodzą na tym samym budżecie ryzyka.
+
+Pomiar (dry run V1a, 2016-01-05 → 2016-04-28, 6 par, 50 transakcji; `trades.parquet` przebiegu):
+
+| | średnie jednocześnie otwarte ryzyko |
+|---|---|
+| V1a (limit portfela 6 R, ADR-033) | **4,38 R** |
+| koszyk §12 (1 long + 1 short, ADR-038) | **2,00 R** |
+
+Strategia trzyma więc średnio **2,2× większą ekspozycję**. Przy liniowym sizingu daje to wyższe średnie dzienne R **bez żadnej przewagi** — czyli błąd optymistyczny dla H₁, dokładnie ten kierunek, którego zakazuje ADR-024. Kontrola, która ma być progiem, sama by go obniżała.
+
+Sprzeczność jest też z logiką ADR-019. Uzasadnia on obowiązkowość koszyka zdaniem „jeśli system nie bije koszyka poza próbą, przechodzimy na koszyk”. Przechodząc na koszyk, uruchomiłoby się go na WŁASNYM budżecie ryzyka, nie na jego. Pytanie brzmi więc „co daje więcej na jednostkę ryzyka”, a nie „co daje więcej”.
+
+**Decyzja:**
+
+1. **Statystyka porównania to Sharpe serii dziennych R**, liczony po obu stronach tak samo (`validation/dsr.sharpe`, na obserwację, bez annualizacji), na wspólnej osi dni roboczych (`bootstrap.business_day`). Bezskalowy, więc różnica budżetów ryzyka przestaje wchodzić do werdyktu.
+
+2. **Kryterium:** CI95 bootstrapu blokowego (20 dni roboczych) **różnicy Sharpe'ów**, strategia minus koszyk, w całości powyżej zera.
+
+3. **Bloki losowane RAZ i stosowane do OBU serii** w każdej replikacji. Niezależne losowanie zerwałoby korelację dzienną między strategią a koszykiem — obie handlują te same pary w tych samych dniach — i dałoby przedział ufności różnicy szerszy, niż wynika z danych.
+
+4. **Raport niesie obowiązkowo także wielkości, które kryterium normalizuje:** średnie otwarte ryzyko obu serii w R, średnie dzienne R obu i Sharpe obu osobno. Bezskalowe kryterium nie może być pretekstem do ukrycia tego, że jedna strona handluje dwa razy większą ekspozycją.
+
+5. **Raport podaje wynik koszyka osobno dla każdej z pięciu kotwic rebalansu** (ADR-039), a nie samą średnią. Rozrzut między kotwicami jest JEDYNĄ kontrolą wrażliwości, jaką ten koszyk ma — V1a ma siatkę z ADR-028, koszyk nie ma nic. Uśrednienie bez podania rozrzutu ukrywałoby dokładnie tę informację, dla której kotwic jest pięć.
+
+6. **Werdykt rozstrzyga wartość punktowa marży (0,5%), ale idzie z całą osią** `cohort_a_markup_sensitivity` (ADR-037). Finansowanie obciąża obie strony, więc marża przesuwa obie — i to nie o tyle samo, bo koszyk z założenia carry OTRZYMUJE, a płaci marżę na dwóch nogach. Werdykt kontroli #5 zależny wyłącznie od wartości punktowej jest nieważny.
+
+**Odrzucone:**
+
+- *Różnica średnich dziennych R (ADR-039).* Przechylona 2,2× na korzyść strategii wielkością, która nie ma nic wspólnego z jakością sygnału.
+- *Normalizacja obu serii do wspólnego otwartego ryzyka* (podzielenie dziennego R przez średnie otwarte R). Prostsze i zostaje w R, ale zakłada, że ryzyko rośnie liniowo z liczbą pozycji — a §8 przyjmuje ρ = 1 tylko WEWNĄTRZ bloku walutowego, nie między blokami. Sharpe bierze zmienność zrealizowaną i tego założenia nie potrzebuje.
+- *Przeskalowanie koszyka do budżetu strategii (np. do 4,38 R).* Budżet strategii jest wynikiem jej własnych reguł i zmienia się z okresem i z wariantem siatki. Benchmark przestałby być stałym punktem odniesienia i zaczął zależeć od tego, co ocenia.
+- *Sharpe na transakcję.* Koszyk nie ma transakcji w tym sensie — ma ciągłą pozycję przebudowywaną raz w tygodniu.
+- *Rezygnacja z przedziału ufności.* Patrz ADR-039: różnica dwóch hałaśliwych statystyk rozstrzygnięta na trzecim miejscu po przecinku nie jest dowodem, a ciężar dowodu leży po stronie H₁.
+
+**Konsekwencje:** zmienia się pole `validation.benchmark_carry_trend.comparison`, sekcja bez `frozen: true`, więc `frozen_sha256` = `2eab678f…` zostaje bez zmian. Żaden wynik nie wymaga przeliczenia — kontrola #5 nie została jeszcze policzona ani razu. Pozostałe wiersze ADR-039 (kotwice, jednostka R, koszty, brak blackoutu, pomijanie niepełnych tygodni) obowiązują bez zmian.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
