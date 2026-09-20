@@ -93,6 +93,33 @@ def test_friday_cutoff_is_15_new_york_inclusive(bar_utc, blocked):
     assert frame([bar_utc])["9_friday"][0] is blocked
 
 
+# --- ADR-042: sesja otwarcia tygodnia -----------------------------------------
+
+@pytest.mark.parametrize("bar_utc, blocked", [
+    (dt.datetime(2019, 1, 13, 21, tzinfo=UTC), True),   # ndz 21:00 -> decyzja ndz 22:00
+    (dt.datetime(2019, 1, 13, 22, tzinfo=UTC), True),   # ndz 22:00 -> decyzja ndz 23:00
+    (dt.datetime(2019, 1, 13, 23, tzinfo=UTC), False),  # ndz 23:00 -> decyzja pon 00:00
+    (dt.datetime(2019, 1, 11, 20, tzinfo=UTC), False),  # pt 20:00 -> decyzja pt 21:00
+    (dt.datetime(2019, 1, 14, 3, tzinfo=UTC), False),   # pon 04:00 UTC, Tokio
+])
+def test_sunday_open_blocks_the_decision_not_the_bar(bar_utc, blocked):
+    """Reguła zaczepia się o moment DECYZJI, jak warunki 8 i 9. Bar 23:00
+    daje decyzję o 00:00 UTC w poniedziałek i przechodzi."""
+    assert frame([bar_utc])["10_sunday_open"][0] is blocked
+
+
+@pytest.mark.parametrize("bar_utc", [
+    dt.datetime(2019, 1, 13, 23, tzinfo=UTC),   # decyzja pon 00:00 UTC = ndz 19:00 EST
+    dt.datetime(2019, 7, 14, 23, tzinfo=UTC),   # decyzja pon 00:00 UTC = ndz 20:00 EDT
+    dt.datetime(2019, 1, 14, 3, tzinfo=UTC),    # decyzja pon 04:00 UTC = ndz 23:00 EST
+])
+def test_sunday_open_uses_utc_so_tokyo_morning_stays_open(bar_utc):
+    """W czasie NY te chwile są jeszcze niedzielą (tydzień FX otwiera się
+    17:00 NY), więc kryterium „niedziela NY” obcięłoby poranną sesję
+    tokijską. Kryterium jest w UTC — patrz ADR-042."""
+    assert frame([bar_utc])["10_sunday_open"][0] is False
+
+
 # --- luki w danych ------------------------------------------------------------
 
 def test_weekend_is_not_a_data_gap():

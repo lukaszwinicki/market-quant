@@ -355,6 +355,10 @@ no_trade_conditions:
      note: "Brak danych MUSI być jawnym, logowanym powodem NO TRADE."}
   - {id: 8, rule: "okno rollover 16:45-17:15 NY"}
   - {id: 9, rule: "piątek po 15:00 NY"}
+  - {id: 10, rule: "moment decyzji wypada w niedzielę czasu UTC",
+     note: "ADR-042: sesja otwarcia tygodnia. Do ADR-041 te bary były blokowane
+            brakiem atr_d1_14, czyli przypadkiem, a nie regułą. UTC, nie NY —
+            w czasie NY warunek objąłby poranną sesję tokijską."}
 
 default_state: "NO_TRADE"
 log_every_no_trade_with_reason: true

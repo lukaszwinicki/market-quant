@@ -864,6 +864,37 @@ Pomiar w `reports/atr_sunday_stub.md`, wszystkie sześć par kohorty A, 2015-01-
 
 ---
 
+## ADR-042 — NO TRADE w sesji niedzielnej (warunek 10)
+
+**Status:** ACCEPTED · 2026-09-20 · **Doprecyzowuje:** ADR-033, `no_trade_conditions` · **Wynika z:** ADR-041 pkt 4
+
+**Kontekst:** do ADR-041 bary sesji niedzielnej (21:00–23:00 UTC) miały `atr_d1_14 = None`, więc `decision_frame()` oznaczał je jako `warmup` i nigdy nie dawały wejścia. Po ADR-041 dostają ATR z ostatniej pełnej doby i stają się normalnymi kandydatami. Zmierzone na 2015-01…2016-04, sześć par: z **1073 barów niedzielnych 302 (28,1%) niesie sygnał V1a** przy progach baseline (`mom_480 > 0`, `donch_pos_55 > 0,80`). To nie jest przypadek brzegowy.
+
+**Decyzja:** dochodzi warunek NO TRADE **`10_sunday_open`** — **moment decyzji wypada w niedzielę czasu UTC**. Priorytet w logu decyzji: po `9_friday`, przed `split_boundary`.
+
+**Reguła zaczepia się o moment DECYZJI, nie o etykietę bara.** To rozróżnienie zmienia wynik, bo `decision_time_for_bar()` przesuwa o godzinę: bary niedzielne 21:00 i 22:00 dają decyzję w niedzielę i są blokowane, a bar 23:00 daje decyzję w poniedziałek 00:00 UTC i przechodzi. Zmierzone: blokowanych jest **659 z 1073 barów niedzielnych (61%), w tym 182 z sygnałem**; przechodzi 414 barów, w tym 120 z sygnałem.
+
+Tak ma być. Blokujemy transakcję, a transakcja zawiera się w chwili decyzji — to ten sam odczyt, co przy `8_rollover` i `9_friday`, które też dotyczą momentu decyzji, a nie bara. Poniedziałek 00:00 UTC to 09:00 w Tokio, czyli normalna płynność sesji azjatyckiej; blokowanie go byłoby już nie ostrożnością, lecz obcięciem próby.
+
+**Strefa: UTC, nie Nowy Jork** — mimo że warunki 8 i 9 są zapisane w czasie NY. Powód jest zmierzony, nie estetyczny: tydzień FX otwiera się w niedzielę o 17:00 NY, więc test „niedziela czasu NY” blokowałby decyzje od 22:00 UTC aż do 04:59 UTC w poniedziałek, czyli **całą poranną sesję tokijską**. Kryterium w UTC pokrywa się natomiast dokładnie z granicą doby z `data.d1_boundary` („00:00 UTC”), która jest konwencją zamrożoną tego projektu. Test na dniu tygodnia w UTC nie ma przy tym problemu z DST, którego zakazuje ADR-034 pkt 4 — nie ma tu stałego offsetu do pomylenia, bo nie ma godziny zegarowej.
+
+**Uzasadnienie:**
+
+1. **Spójność z istniejącą listą.** `8_rollover` (16:45–17:15 NY) i `9_friday` (piątek od 15:00 NY) istnieją dokładnie po to, żeby nie wchodzić w cienką płynność i szeroki spread. Niedzielne otwarcie jest najcieńszym momentem tygodnia — mocniejszy przypadek niż oba już zapisane.
+2. **Naprawa danych nie powinna po cichu otwierać nowej klasy wejść.** ADR-041 naprawia pomiar zmienności. Gdyby przy okazji odblokował handel w 2,1% barów, byłaby to zmiana reguły przemycona w zmianie danych — dokładnie ten rodzaj cichej decyzji, którym ADR-033 i ADR-039 mają zapobiegać.
+3. **Stan faktyczny nie zmienia się wobec wszystkich dotychczasowych pomiarów.** Te bary i tak nigdy nie dawały wejścia. Zmienia się wyłącznie to, że blokuje je reguła, a nie brak cechy — czyli że blokada jest widoczna w logu decyzji i policzona w raporcie.
+
+**Odrzucone:**
+
+- *Zostawić bary niedzielne dopuszczone i pozwolić, żeby rozstrzygnął pomiar.* Kusi metodologicznie, ale przesłanka jest znana z góry: spread w niedzielny wieczór jest wielokrotnie szerszy niż podłoga kosztu z ADR-024, więc model kosztów zaniżałby koszt akurat w tych barach. Błąd optymistyczny dla H₁, zakazany kierunek.
+- *Blokada po etykiecie bara zamiast po momencie decyzji.* Objęłaby też bar 23:00, czyli decyzję o 00:00 UTC w poniedziałek. Niespójne z warunkami 8 i 9 i obcina próbę bez powodu.
+- *Kryterium w czasie NY, dla spójności z warunkami 8 i 9.* Blokuje poranną sesję tokijską — uzasadnienie wyżej.
+- *Rozszerzenie `8_rollover` zamiast nowego warunku.* Inna przyczyna, inna pora, inny czas odniesienia. Sklejenie dwóch reguł w jedną utrudniłoby odczytanie z raportu, która z nich ile blokuje.
+
+**Konsekwencje:** dochodzi pozycja `{id: 10}` w `no_trade_conditions` — sekcja **bez** `frozen: true`, więc ten ADR sam z siebie nie zmienia pieczęci (zmienia ją ADR-041). Log decyzji zyskuje kategorię `10_sunday_open`; raporty V1a sprzed tej zmiany jej nie mają. Kontrola #5 (koszyk §12) **nie jest objęta** — ADR-039 wprost wyklucza przenoszenie warunków NO TRADE V1a na benchmark, a moment rebalansu koszyka jest osobną sprawą, nierozstrzygniętą.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

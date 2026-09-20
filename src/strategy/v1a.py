@@ -20,6 +20,7 @@ zadziałał żaden powód. Powody (ADR-033), w kolejności raportowania:
     6_open_position para już ma otwartą pozycję
     8_rollover      decyzja w [16:45, 17:15] czasu Nowego Jorku
     9_friday        piątek od 15:00 czasu Nowego Jorku
+    10_sunday_open  decyzja w niedzielę — sesja otwarcia (ADR-042)
     split_boundary  horyzont wychodzi poza split (ADR-030)
     no_fill         symulator nie ma danych w chwili decyzji / NO_DATA
 
@@ -54,7 +55,7 @@ NY = "America/New_York"
 
 REASON_ORDER = ("warmup", "7_data_gap", "no_signal", "1_blackout", "2_vol_pct",
                 "4_ccy_limit", "5_portfolio", "6_open_position", "8_rollover",
-                "9_friday", "split_boundary", "no_fill")
+                "9_friday", "10_sunday_open", "split_boundary", "no_fill")
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,11 @@ def decision_frame(features: pl.DataFrame, symbol: str, params: V1aParams,
         (pl.col("vol_pct_252") > rules.vol_pct_max).fill_null(False).alias("2_vol_pct"),
         ny.dt.time().is_between(lo, hi, closed="both").alias("8_rollover"),
         ((ny.dt.weekday() == 5) & (ny.dt.time() >= rules.friday_cutoff_ny)).alias("9_friday"),
+        # ADR-042: sesja otwarcia tygodnia. Zaczepione o moment DECYZJI, jak
+        # warunki 8 i 9 — bar 23:00 daje decyzję o 00:00 UTC w poniedziałek
+        # i przechodzi. Strefa UTC, nie NY: „niedziela czasu NY” obejmowałaby
+        # decyzje do 04:59 UTC, czyli całą poranną sesję tokijską.
+        (decision.dt.weekday() == 7).alias("10_sunday_open"),
         (horizon_end > split_end).alias("split_boundary"),
     )
 
