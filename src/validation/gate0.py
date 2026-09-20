@@ -112,6 +112,12 @@ def make_evaluator(m1: dict[str, pl.DataFrame], costs: dict[str, CostModel],
     wraca wielokrotnie. Pamięć nie zmienia wyniku, tylko czas.
     """
     memo: dict[tuple[str, dt.datetime, str], dict | None] = {}
+    # Kolejność kolumn wyniku. `label_events` przepisuje kolumny ZDARZENIA,
+    # a strategia podaje je jako (ts, symbol, side, atr_d1_14), kontrola zaś
+    # jako (ts, atr_d1_14, symbol, side). Memo jest dzielone między nimi, więc
+    # bez tego kolejność kolumn zależałaby od tego, kto pierwszy trafił do
+    # memo — a `pl.concat` powtórzeń kontroli porównuje kolejność, nie nazwy.
+    order: list[str] = []
 
     def evaluate(events: pl.DataFrame) -> pl.DataFrame:
         rows = []
@@ -123,7 +129,19 @@ def make_evaluator(m1: dict[str, pl.DataFrame], costs: dict[str, CostModel],
                 memo[key] = lab.row(0, named=True) if lab.height else None
             if memo[key] is not None:
                 rows.append(memo[key])
-        return pl.DataFrame(rows) if rows else pl.DataFrame()
+        if not rows:
+            return pl.DataFrame()
+        if not order:
+            order.extend(rows[0])
+        expected = set(order)
+        for r in rows:
+            if r.keys() != expected:
+                # Różny ZBIÓR kolumn to inne zdarzenia, nie inna kolejność.
+                # Cicha projekcja gubiłaby kolumny, więc błąd jest głośny.
+                raise ValueError(
+                    "etykiety z różnymi kolumnami w jednym evaluate: "
+                    f"{sorted(expected)} vs {sorted(r)}")
+        return pl.DataFrame([{c: r[c] for c in order} for r in rows])
 
     evaluate.memo = memo      # do diagnostyki: ile unikalnych transakcji
     return evaluate

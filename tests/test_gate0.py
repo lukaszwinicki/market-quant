@@ -89,6 +89,43 @@ def test_memoized_evaluator_matches_label_events_and_does_not_recompute(walk, mo
     assert not calls
 
 
+def test_evaluator_column_order_does_not_depend_on_who_called_first(walk):
+    """REGRESJA: memo jest dzielone między strategią a kontrolą, a te podają
+    te same kolumny zdarzenia w RÓŻNEJ kolejności (`run_v1a`: ts, symbol,
+    side, atr_d1_14; kontrola: ts, atr_d1_14, symbol, side). Kolejność kolumn
+    wyniku nie może od tego zależeć — `pl.concat` powtórzeń kontroli porównuje
+    kolejność, nie nazwy, więc rozjazd wywracał cały przebieg."""
+    spec = LabelSpec(horizon_business_days=1)
+    cands = candidate_events(hourly(24 * 10), "EURUSD")
+    base = cands.head(6).with_columns(pl.lit("long").alias("side"))
+
+    as_strategy = base.select("ts", "symbol", "side", "atr_d1_14")
+    as_control = base.select("ts", "atr_d1_14", "symbol", "side")
+
+    evaluate = make_evaluator({"EURUSD": walk}, {"EURUSD": COST}, spec)
+    evaluate(as_strategy.head(3))                  # memo zapełnia strategia
+
+    # Dwa „powtórzenia” kontroli: pierwsze liczy od zera (kolejność kontroli),
+    # drugie trafia w memo zapełnione przez strategię (kolejność strategii).
+    rep1 = evaluate(as_control.tail(3))
+    rep2 = evaluate(as_control.head(3))
+    assert rep1.columns == rep2.columns
+    assert pl.concat([rep1, rep2], how="vertical_relaxed").height == 6
+
+
+def test_evaluator_rejects_labels_with_a_different_column_set(walk):
+    """Inny ZBIÓR kolumn to inne zdarzenia. Cicha projekcja gubiłaby dane,
+    więc ma być błąd."""
+    spec = LabelSpec(horizon_business_days=1)
+    cands = candidate_events(hourly(24 * 10), "EURUSD")
+    base = cands.head(4).with_columns(pl.lit("long").alias("side"))
+
+    evaluate = make_evaluator({"EURUSD": walk}, {"EURUSD": COST}, spec)
+    evaluate(base.head(2))
+    with pytest.raises(ValueError, match="różnymi kolumnami"):
+        evaluate(base.with_columns(pl.lit(1.0).alias("extra")))
+
+
 def test_rep_means_equal_random_control(walk):
     spec = LabelSpec(horizon_business_days=1)
     cands = eligible_candidates(hourly(24 * 20), "EURUSD", T0,
