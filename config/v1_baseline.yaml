@@ -103,6 +103,18 @@ data:
   d1_boundary:
     research: "00:00 UTC"
     frozen: true
+
+    # ADR-041: doba z mniej niż `min_h1_bars` barami H1 jest NIEPEŁNA i nie
+    # wchodzi do szeregu dziennego. Bez tego sesja niedzielna (21:00-24:00
+    # UTC, 3 bary) tworzy własny bar dzienny i zaniża atr_d1_14 o ~12% na
+    # wszystkich sześciu parach. Próg z pomiaru zakresów dobowych
+    # (reports/atr_sunday_stub.md §3b): niedziela 20-25% zakresu pełnej
+    # doby, 25.12 przy 8 barach ~36%, piątek przy 21 barach 99-116%.
+    min_h1_bars: 12
+
+    # Kryterium kompletności stosuje się do KAŻDEGO wariantu granicy, nie
+    # tylko do 00:00 UTC — inaczej test odporności porównywałby szereg
+    # z kikutami z szeregami bez nich.
     # Zamiast dopasowywać się do konkretnego brokera, traktujemy to jako
     # test odporności. Jeśli wynik istotnie zależy od granicy dnia,
     # problem jest w strategii, nie w brokerze.

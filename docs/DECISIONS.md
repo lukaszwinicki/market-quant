@@ -808,6 +808,62 @@ Sprzeczność jest też z logiką ADR-019. Uzasadnia on obowiązkowość koszyka
 
 ---
 
+## ADR-041 — Niepełne doby nie wchodzą do szeregu dziennego; dostępność ATR przez asof
+
+**Status:** ACCEPTED · 2026-09-20 · **Zmienia sekcję `frozen: true`** (`data.d1_boundary`) · **Dotyczy:** ADR-023, ADR-024 (test odporności granicy dnia), ADR-039 (jednostka R koszyka)
+
+**Unieważnia `frozen_sha256` = `2eab678f8ea5d942d2751abd0a01404d4b895768318debf48eb014cc1cc47dcd`. Nowa pieczęć: `b77d0b69fa8d2d3d22a225915db6e66710d1da24a6420c90d0ed5092f4b55ec4`.**
+
+**Kontekst:** rynek FX chodzi ciągle od niedzieli 21:00 UTC do piątku. `daily_bars()` grupuje bary H1 po dobie kalendarzowej, więc sesja niedzielna tworzy własny bar dzienny zbudowany z **3 godzin** i wchodzi do `atr(d1, 14)` jako pełnoprawny dzień. Co szósta doba w szeregu jest kikutem.
+
+Pomiar w `reports/atr_sunday_stub.md`, wszystkie sześć par kohorty A, 2015-01-01 → 2016-04-28 (tyle barów jest zbudowane):
+
+| Wielkość | Wynik |
+|---|---|
+| niedziel będących kikutem | **69/69 na każdej parze**, mediana 3 bary H1 wobec 24 |
+| zakres niedzieli wobec doby pełnej | 19,6% – 25,8% |
+| deflacja `atr_d1_14` (mediana parowana per dzień) | **−10,7% … −11,8%**, jednakowo na sześciu parach |
+| udział etykiet TP | 10,2% → **6,5%** po naprawie (−36% względnie) |
+| udział bariery czasowej | 52,1% → **62,6%** |
+| średni `cost_r` | 0,01049 → 0,00898 (**zawyżony o 16,8%**) |
+
+**Błąd jest podwójny.** Pierwszy: deflacja ATR dotyczy każdego dnia tygodnia, bo okno ATR14 obejmuje 14 kolejnych barów dziennych, z czego ~2,3 to kikuty (`2,3/14 × 0,8 ≈ 13%`). Drugi: `_attach_daily_volatility()` mapuje dzień D na D+1 przez join po dacie, a sobota nie ma bara, więc **bary niedzielne mają `atr_d1_14 = None`** i są wykluczone z handlu przypadkiem, a nie regułą.
+
+**To nie jest błąd skali.** Gdyby deflacja była czystym przeskalowaniem jednostki R, znak expectancy by się nie zmienił i sprawa byłaby obojętna dla werdyktu. Ale bariery są zaciśnięte przy NIEZMIENIONYM horyzoncie czasowym, więc zmienia się geometria triple barrier — czyli skład próby, a nie tylko jednostka, w której jest wyrażona. Warunek poprawności z ADR-023 (`bariera ≈ σ√T`) był dotąd sprawdzany przeciwko zaniżonej σ.
+
+**Decyzja:**
+
+1. **Doba z mniej niż `min_h1_bars` barami H1 jest NIEPEŁNA i nie wchodzi do szeregu dziennego.** `data.d1_boundary.min_h1_bars = 12`. Granica doby zostaje **00:00 UTC**, bez zmian.
+
+2. **Dostępność wartości dziennych liczona przez asof, nie przez join po dacie.** Bar H1 dostaje `atr_d1_14` i `vol_pct_252` z **ostatniej PEŁNEJ doby zamkniętej przed jego własną dobą**. Punkt 2 jest nierozłączny z punktem 1: samo odfiltrowanie niedziel zostawiłoby poniedziałki bez żadnej wartości, bo join szukałby wtedy nieistniejącego bara niedzielnego.
+
+3. **Kryterium kompletności stosuje się do każdego wariantu granicy doby**, także do „17:00 NY” i „22:00 UTC” z testu odporności ADR-024.
+
+4. **Bary sesji niedzielnej dostają odtąd `atr_d1_14`** (z piątku) i przestają być blokowane brakiem cechy. Ich wykluczenie z handlu przechodzi do jawnej reguły — ADR-042.
+
+**Uzasadnienie progu 12:** wybrany z pomiaru zakresów dobowych, nie z liczby barów. Niedziela (3 bary) ma 20–25% zakresu doby pełnej, 25.12.2015 (8 barów) ~36%, piątek (21 barów) **99–116%** — piątek jest dniem pełnym, bo brakujące 3 godziny to martwy wieczór po zamknięciu Nowego Jorku. Prawdziwa przepaść leży więc między 8 a 21 barami, a nie między 3 a 21, jak sugerował pierwszy skan. Próg 12 („pół doby handlowej”) siedzi w jej środku; każda wartość 9–20 daje na tej próbie identyczny wynik, wartości ≤ 8 przepuszczają Boże Narodzenie.
+
+**Dlaczego teraz, a nie na bramce 2:** `data.d1_boundary` ma prerejestrowany test odporności przeciwko „17:00 NY” i „22:00 UTC”. **Obie alternatywy kasują kikut całkowicie** — przy granicy przesuniętej przed 21:00 UTC sesja niedzielna wpada do poniedziałku i żadna doba nie jest 3-godzinna. Test w dotychczasowej postaci porównywałby więc „zepsuty ATR” z „dobrym ATR”, a nie trzy konwencje granicy doby, przy kryterium porażki „>30% różnicy” i zmierzonych wielkościach rzędu 17–36%. Werdykt „wynik zależy od granicy dnia” byłby w dużej części artefaktem. Kierunek tego błędu jest pesymistyczny dla H₁, więc nie łamie ADR-024 — ale fałszywe no-go kończy projekt tak samo skutecznie jak prawdziwe, a aparatura ma dawać liczbę z przedziałem ufności, nie werdykt przechylony w bezpieczną stronę.
+
+**Koszt unieważnienia wynosi dziś zero.** Jedyny wpis w `trials.jsonl` (`20260919T134506Z-c4710e`, bramka 0) jest już unieważniony przez ADR-026. Po pierwszym prawdziwym przebiegu V1a ta sama naprawa kosztowałaby unieważnienie próby liczonej do N w DSR i do limitu 50.
+
+**Odrzucone:**
+
+- *Zostawić i polegać na teście odporności z bramki 2.* Test mierzyłby artefakt — uzasadnienie wyżej. Dodatkowo każda liczba w R pozostałaby zawyżona co do modułu o ~12%, a zmierzony na bramce 0 koszt 0,0106 R o ~17%.
+- *Przesunięcie granicy doby na 22:00 UTC albo 17:00 NY.* Kasuje kikut przy okazji, ale to zmiana `d1_boundary.research` na jedną z trzech wartości prerejestrowanego testu odporności. Baseline stałby się równy alternatywie i test przestałby istnieć.
+- *Próg tylko w kodzie, bez ruszania konfiguracji.* Zmiana semantyki zamrożonej wielkości bez zmiany `frozen_sha256`. Pieczęć istnieje po to, żeby taka zmiana była głośna; cicha naprawa jest gorsza od braku naprawy.
+- *Wygładzanie kikuta zamiast wykluczania* (np. skalowanie zakresu niepełnej doby do 24 godzin). Wprowadza współczynnik dobrany przez nas i zakłada, że zmienność rozkłada się w dobie równomiernie — a sesja niedzielna to najcieńsza płynność tygodnia, nie 1/8 normalnego dnia.
+- *Odłożenie do czasu przebudowy barów na pełnym zakresie.* Mechanizm jest strukturalny (co szósta doba to 3-godzinny kikut), a naprawa dziś nie unieważnia żadnego ważnego wyniku. Pomiar warto powtórzyć po przebudowie, ale decyzja od niego nie zależy.
+
+**Konsekwencje:**
+
+- `frozen_sha256` zmienia się na `b77d0b69…`. Wszystkie dotychczasowe wyniki są formalnie unieważnione; faktycznie unieważnia to jedynie przebieg `20260919T134506Z-c4710e`, już nieważny po ADR-026. Prerejestracja ADR-027..031 dotyczy sekcji `signal_v1a` i `validation`, których ta zmiana nie dotyka, ale **pieczęć jest jedna**, więc jej zmiana jest odnotowana jako jawne unieważnienie, a nie jako korekta redakcyjna.
+- `daily_bars()` jest wspólne dla cech i dla benchmarku §12, więc naprawa wchodzi też do koszyka. Dwa skutki uboczne, oba pożądane: kotwica poniedziałkowa przestaje pomijać wszystkie tygodnie (w dry runie 16/16 — bar decyzyjny z niedzieli 23:00 nie miał ATR), a `momentum()` liczone jako 63 wiersze wstecz odpowiada wreszcie 63 dniom roboczym — przy szeregu z niedzielami było to ~6 wierszy na tydzień, czyli 63 wiersze ≈ 10,5 tygodnia zamiast 12,6.
+- Bramka 0 wymaga przeliczenia od zera i tak — była do przeliczenia po ADR-026.
+- Test odporności z bramki 2 zachowuje sens: po naprawie żaden z trzech wariantów granicy nie ma kikutów, więc mierzy konwencję, a nie defekt danych.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

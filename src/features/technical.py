@@ -41,6 +41,11 @@ MOM_LOOKBACKS = (24, 120, 480)
 DONCHIAN = 55
 VOL_PCT_MIN_DAYS = 252
 
+# ADR-041: doba z mniej niż tylu barami H1 jest NIEPEŁNA i wypada z szeregu
+# dziennego. Wartość musi się zgadzać z `data.d1_boundary.min_h1_bars`
+# (sekcja `frozen: true`) — pilnuje tego `test_min_h1_bars_matches_config`.
+MIN_H1_BARS_PER_DAY = 12
+
 FEATURE_COLUMNS = [
     "atr_h1_14", "mom_24", "mom_120", "mom_480", "donch_pos_55",
     "atr_d1_14", "vol_pct_252",
@@ -70,8 +75,19 @@ def atr(df: pl.DataFrame, period: int, prefix: str = "bid") -> pl.Series:
     return tr.rolling_mean(window_size=period, min_samples=period)
 
 
-def daily_bars(h1: pl.DataFrame) -> pl.DataFrame:
-    """Bary D1 z H1. Granica dnia: 00:00 UTC (config: data.d1_boundary)."""
+def daily_bars(h1: pl.DataFrame, min_bars: int = MIN_H1_BARS_PER_DAY) -> pl.DataFrame:
+    """Bary D1 z H1. Granica dnia: 00:00 UTC (config: data.d1_boundary).
+
+    Doba o mniej niż `min_bars` barach H1 jest NIEPEŁNA i wypada z szeregu
+    (ADR-041). Bez tego sesja niedzielna (21:00-24:00 UTC, 3 bary) tworzy
+    własny bar dzienny i zaniża ATR14 o ~12% na wszystkich parach — a ATR
+    dzienny wyznacza po ADR-023 bariery i jednostkę R, więc zaniża wszystko.
+
+    Próg jest z pomiaru zakresów dobowych, nie z liczby godzin
+    (`reports/atr_sunday_stub.md` §3b): niedziela 20-25% zakresu doby pełnej,
+    25.12 przy 8 barach ~36%, piątek przy 21 barach 99-116%. Piątek jest
+    dniem PEŁNYM — brakujące 3 godziny to martwy wieczór po Nowym Jorku.
+    """
     return (
         h1.sort("ts")
         .group_by_dynamic("ts", every="1d", closed="left", label="left")
@@ -79,7 +95,10 @@ def daily_bars(h1: pl.DataFrame) -> pl.DataFrame:
             pl.col("bid_high").max(),
             pl.col("bid_low").min(),
             pl.col("bid_close").last(),
+            pl.len().alias("n_h1_bars"),
         )
+        .filter(pl.col("n_h1_bars") >= min_bars)
+        .drop("n_h1_bars")
         .sort("ts")
     )
 
@@ -150,10 +169,19 @@ def compute_features(h1: pl.DataFrame, donchian: int = DONCHIAN) -> pl.DataFrame
 
 
 def _attach_daily_volatility(h1: pl.DataFrame) -> pl.DataFrame:
-    """Dolicz atr_d1_14 i vol_pct_252 z OSTATNIEGO ZAMKNIĘTEGO dnia.
+    """Dolicz atr_d1_14 i vol_pct_252 z ostatniej ZAMKNIĘTEJ PEŁNEJ doby.
 
     W barze o 10:00 dnia D wartości dnia D jeszcze nie znamy — dzień się
-    nie skończył. Stąd shift(1) na serii dziennej przed złączeniem.
+    nie skończył. Stąd przesunięcie serii dziennej o dobę przed złączeniem.
+
+    Złączenie jest ASOF (ADR-041 pkt 2), nie po dokładnej dacie. Szereg
+    dzienny nie ma sobót ani dób niepełnych, więc join po dacie zostawiałby
+    dziury: poniedziałek szukałby bara niedzielnego, którego po ADR-041 pkt 1
+    już nie ma, i traciłby ATR całkowicie. Asof daje mu ATR z piątku.
+
+    Kauzalność: dla bara z doby D bierzemy wpis o kluczu <= D, a klucz to
+    `dzień + 1`, więc źródłem jest doba ściśle wcześniejsza niż D. Bar nie
+    może zobaczyć doby, w której sam leży. Pilnuje tego `test_features_are_causal`.
     """
     d1 = daily_bars(h1)
     if d1.height < 2:
@@ -168,16 +196,17 @@ def _attach_daily_volatility(h1: pl.DataFrame) -> pl.DataFrame:
         expanding_percentile_rank(d1["atr_d1_14"], VOL_PCT_MIN_DAYS)
     )
 
-    # shift(1): wartości stają się dostępne dopiero NAZAJUTRZ
+    # + 1 dzień: wartości stają się dostępne dopiero NAZAJUTRZ
     available = d1.select(
         (pl.col("ts") + pl.duration(days=1)).alias("day"),
         pl.col("atr_d1_14"),
         pl.col("vol_pct_252"),
-    )
+    ).sort("day")
 
     return (
         h1.with_columns(pl.col("ts").dt.truncate("1d").alias("day"))
-        .join(available, on="day", how="left")
+        .sort("day")
+        .join_asof(available, on="day", strategy="backward")
         .drop("day")
         .sort("ts")
     )

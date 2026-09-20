@@ -8,10 +8,11 @@ import datetime as dt
 import numpy as np
 import polars as pl
 import pytest
+import yaml
 
 from src.features.technical import (
-    ATR_PERIOD, DONCHIAN, FEATURE_COLUMNS, VOL_PCT_MIN_DAYS,
-    atr, compute_features, expanding_percentile_rank,
+    ATR_PERIOD, DONCHIAN, FEATURE_COLUMNS, MIN_H1_BARS_PER_DAY, VOL_PCT_MIN_DAYS,
+    atr, compute_features, daily_bars, expanding_percentile_rank,
 )
 
 UTC = dt.timezone.utc
@@ -158,3 +159,163 @@ def test_no_feature_column_contains_nan():
     for col in FEATURE_COLUMNS:
         n = df.select(pl.col(col).is_nan().sum()).item() or 0
         assert n == 0, f"{col} zawiera {n} NaN-ów zamiast nulli"
+
+
+# --- ADR-041: niepełne doby nie wchodzą do szeregu dziennego ------------------
+#
+# Powyższe testy używają ciągłych barów co godzinę, więc każda doba ma 24 bary
+# i kalendarz FX w nich nie występuje. Poniższe budują prawdziwy kształt
+# tygodnia: niedziela 3 bary, pon-czw po 24, piątek 21, soboty brak.
+
+SUNDAY_RANGE_FRACTION = 0.2       # zmierzone 20-25% zakresu doby pełnej
+FULL_RANGE = 0.0100
+SUNDAY_RANGE = FULL_RANGE * SUNDAY_RANGE_FRACTION
+
+
+def fx_week_h1(n_weeks: int, base: float = 1.10, spread: float = 3e-5,
+               vary: bool = False) -> pl.DataFrame:
+    """Bary H1 o kształcie tygodnia FX, ze sterowanym zakresem dobowym.
+
+    Cena zamknięcia jest stała, więc TR doby = jej zakres (high - low)
+    i ATR14 da się policzyć w pamięci. Niedziela ma zakres
+    SUNDAY_RANGE, każda inna doba FULL_RANGE.
+
+    `vary=True` nadaje każdej pełnej dobie inny zakres, dzięki czemu wartość
+    ATR jednoznacznie wskazuje dobę źródłową.
+    """
+    first_sunday = dt.datetime(2015, 1, 4, tzinfo=UTC)   # niedziela
+    rows = []
+    full_day_i = 0
+    for w in range(n_weeks):
+        week = first_sunday + dt.timedelta(weeks=w)
+        days = [(week, range(21, 24))]                         # ndz: 3 bary
+        days += [(week + dt.timedelta(days=d), range(24))      # pon-czw: 24
+                 for d in (1, 2, 3, 4)]
+        days.append((week + dt.timedelta(days=5), range(21)))  # pt: 21 barów
+        for day, hours in days:
+            if day.weekday() == 6:
+                rng_ = SUNDAY_RANGE
+            else:
+                rng_ = FULL_RANGE * (1 + full_day_i / 100) if vary else FULL_RANGE
+                full_day_i += 1
+            half = rng_ / 2
+            for h in hours:
+                rows.append((day + dt.timedelta(hours=h), base + half, base - half))
+
+    ts, hi, lo = zip(*rows)
+    n = len(rows)
+    return pl.DataFrame({
+        "ts": pl.Series(list(ts), dtype=pl.Datetime("ms", "UTC")),
+        "bid_open": [base] * n, "bid_high": list(hi), "bid_low": list(lo),
+        "bid_close": [base] * n,
+        "ask_open": [base + spread] * n,
+        "ask_high": [h + spread for h in hi],
+        "ask_low": [lo_ + spread for lo_ in lo],
+        "ask_close": [base + spread] * n,
+        "spread_max": [spread] * n, "spread_close": [spread] * n,
+        "n_ticks": pl.Series([100] * n, dtype=pl.UInt32),
+    })
+
+
+def test_min_h1_bars_matches_config():
+    """Próg jest wielkością ZAMROŻONĄ — wartość w kodzie musi się zgadzać
+    z `data.d1_boundary.min_h1_bars`, inaczej pieczęć konfiguracji przestaje
+    opisywać to, co faktycznie policzono."""
+    cfg = yaml.safe_load(open("config/v1_baseline.yaml", encoding="utf-8"))
+    assert cfg["data"]["d1_boundary"]["min_h1_bars"] == MIN_H1_BARS_PER_DAY
+
+
+def test_sunday_stub_is_dropped_from_daily_series():
+    d1 = daily_bars(fx_week_h1(6))
+    dows = d1["ts"].dt.weekday().unique().sort().to_list()
+    assert 7 not in dows, "niedzielny kikut (3 bary H1) wszedł do szeregu D1"
+    assert dows == [1, 2, 3, 4, 5], "wypadła doba, która nie jest kikutem"
+
+
+def test_full_friday_is_kept_despite_having_21_bars():
+    """Piątek ma 21 barów zamiast 24, ale zakres pełnej doby (99-116%
+    zakresu pon-czw). Próg nie może go wyciąć."""
+    d1 = daily_bars(fx_week_h1(6))
+    fridays = d1.filter(pl.col("ts").dt.weekday() == 5)
+    assert fridays.height == 6
+    assert (fridays["bid_high"] - fridays["bid_low"]).to_list() == \
+        pytest.approx([FULL_RANGE] * 6)
+
+
+def test_sunday_stub_deflates_atr_when_threshold_is_disabled():
+    """Test samego zjawiska: przy progu 1 (stan sprzed ADR-041) niedziele
+    wchodzą do ATR14 i zaniżają go o kilkanaście procent."""
+    h = fx_week_h1(12)
+    fixed = atr(daily_bars(h), ATR_PERIOD).drop_nulls()
+    broken = atr(daily_bars(h, min_bars=1), ATR_PERIOD).drop_nulls()
+
+    assert fixed.median() == pytest.approx(FULL_RANGE)
+    # okno 14 dób przy 6 dobach na tydzień to ~2,33 kikuta
+    expected = (FULL_RANGE * (14 - 14 / 6) + SUNDAY_RANGE * 14 / 6) / 14
+    assert broken.median() == pytest.approx(expected, rel=0.05)
+    assert broken.median() < fixed.median() * 0.9
+
+
+def test_monday_keeps_atr_after_sunday_is_dropped():
+    """REGRESJA: samo odfiltrowanie niedziel zostawiłoby poniedziałki bez
+    ATR, bo join po dacie szukałby nieistniejącego bara niedzielnego.
+    Asof musi im dać wartość z piątku."""
+    df = compute_features(fx_week_h1(6))
+    mondays = df.filter((pl.col("ts").dt.weekday() == 1)
+                        & (pl.col("ts") > df["ts"].min() + dt.timedelta(days=21)))
+    assert mondays.height > 0
+    assert mondays["atr_d1_14"].is_not_null().all(), \
+        "poniedziałki straciły atr_d1_14 po wycięciu niedziel"
+
+
+def test_sunday_bars_get_atr_from_the_last_full_day():
+    """Bary sesji niedzielnej dostają ATR z piątku (ADR-041 pkt 4).
+    Do ADR-041 miały null, przez co były blokowane przypadkiem, a nie regułą
+    — jawną regułę dokłada ADR-042."""
+    df = compute_features(fx_week_h1(6))
+    late = df.filter(pl.col("ts") > df["ts"].min() + dt.timedelta(days=21))
+    sundays = late.filter(pl.col("ts").dt.weekday() == 7)
+    fridays = late.filter(pl.col("ts").dt.weekday() == 5)
+
+    assert sundays.height > 0
+    assert sundays["atr_d1_14"].is_not_null().all()
+    # ta sama wartość co ostatni bar piątku tego samego tygodnia
+    assert sundays["atr_d1_14"][-1] == pytest.approx(fridays["atr_d1_14"][-1])
+
+
+def test_daily_values_are_causal_across_weekend_gaps():
+    """Kauzalność na kalendarzu z lukami — `test_features_are_causal` używa
+    barów ciągłych, więc asof po dobach nie jest tam w ogóle sprawdzany."""
+    full = fx_week_h1(40)
+    cut = full.filter(pl.col("ts") < full["ts"].min() + dt.timedelta(weeks=30))
+
+    a = compute_features(cut)
+    b = compute_features(full).head(cut.height)
+    for col in ("atr_d1_14", "vol_pct_252"):
+        x, y = a[col].to_numpy(), b[col].to_numpy()
+        both_nan = np.isnan(x) & np.isnan(y)
+        assert np.array_equal(both_nan, np.isnan(x) | np.isnan(y))
+        np.testing.assert_allclose(x[~both_nan], y[~both_nan], rtol=1e-12,
+                                   err_msg=f"{col} zmieniło się po dołożeniu przyszłości")
+
+
+def test_atr_comes_from_the_last_full_day_strictly_before_the_bars_day():
+    """Wprost semantyka ADR-041 pkt 2, na serii o RÓŻNYCH zakresach dobowych,
+    więc wartość ATR jednoznacznie wskazuje dobę źródłową."""
+    h = fx_week_h1(20, vary=True)
+    d1 = daily_bars(h)
+    d1 = d1.with_columns(atr(d1, ATR_PERIOD).alias("a")).drop_nulls("a")
+    expected_for = dict(zip(d1["ts"].to_list(), d1["a"].to_list()))
+    full_days = d1["ts"].to_list()
+
+    df = compute_features(h).with_columns(pl.col("ts").dt.truncate("1d").alias("day"))
+    checked = 0
+    for bar_day, got in zip(df["day"].to_list(), df["atr_d1_14"].to_list()):
+        earlier = [d for d in full_days if d < bar_day]
+        if not earlier:
+            assert got is None, "bar dostał ATR, choć nie ma wcześniejszej pełnej doby"
+            continue
+        assert got == pytest.approx(expected_for[earlier[-1]]), \
+            f"bar z doby {bar_day} nie wziął ATR z {earlier[-1]}"
+        checked += 1
+    assert checked > 1000
