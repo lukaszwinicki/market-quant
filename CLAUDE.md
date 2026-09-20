@@ -173,7 +173,7 @@ strukturalny, ale warto powtórzyć po przebudowie na pełnym zakresie.
 
 ---
 
-Gotowe (509 testów):
+Gotowe (528 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -329,6 +329,23 @@ per transakcja. Wykrywa tylko duży bias brutto (look-ahead, kolejność barier)
   ADR-042: warunek `10_sunday_open` — moment DECYZJI w niedzielę czasu UTC
   (bar 23:00 daje decyzję w poniedziałek 00:00 UTC i przechodzi).
   Testy tylko na syntetyku; na prawdziwych danych jeszcze nie uruchamiane
+
+ADR-043: rebalans koszyka §12 przeniesiony z 00:00 UTC na 16:00
+Europe/London (fixing WM/Reuters). Powód: decyzja o 00:00 UTC czytała bar
+23:00, godzinę po zamknięciu NY i przed otwarciem Tokio — najcieńszą godzinę
+doby, gdzie spread jest szerszy niż modeluje podłoga ADR-024, czyli koszyk
+był sztucznie łatwiejszy do pobicia. Czas lokalny + strefa, nigdy offset.
+Sekcja niezamrożona, `frozen_sha256` bez zmian.
+
+ADR-044: kontrola #4 ma dwa ramiona. **4a carry-only** rozstrzyga —
+ablacja koszyka §12 (ranking bez momentum), kryterium identyczne z #5.
+Potrzebna obok #5, bo ranking §12 jest zdominowany przez momentum
+(ADR-039: 4,2× większy rozrzut przekrojowy), więc pobicie #5 nie mówi,
+czy strategia bije sam carry. **4b buy & hold** to diagnostyka bez werdyktu:
+FX nie ma broniącego się kierunku pasywnego, więc poprzeczka zależałaby od
+tego, w którą stronę poszedł dolar w próbie. Zawężenie §10.2 #4 („musi
+zostać pobity" stosuje się tylko do 4a) jest świadome i zapisane.
+Sekcja niezamrożona, `frozen_sha256` bez zmian.
 
 Prerejestracja przed V1a (ADR-027..031; config `frozen_sha256` był
 `2eab678f…`, od ADR-041 jest `b77d0b69…`): DSR ≥ 0,95; siatka 7 wariantów jeden-parametr-naraz
@@ -539,22 +556,53 @@ ma — V1a ma siatkę ADR-028, koszyk nie ma nic) oraz całą oś marży.
   Decyzja jest ta sama, różni się tylko przypisany powód (priorytet
   z ADR-033: 5 przed 6). Nie zmieniać bez nowego ADR-u.
 
-Czego NADAL nie ma (spec wymaga): kontrole §10.2 nr 4, 9, 10;
-skrypty bramek 1–5; cała kohorta B.
-(Kontrola #5 / benchmark §12 — ZROBIONA, patrz `src/validation/benchmark.py`.)
+- `src/validation/control4.py` — kontrola #4 wg ADR-044, DWA ramiona.
+  **4a carry-only** (rozstrzygające): `spec.carry_only()` to ablacja koszyka
+  §12 — ta sama konstrukcja, ranking bez członu momentum, zero parametrów
+  swobodnych. Tygodnie pomijane wedle tej samej reguły co §12, łącznie
+  z wymogiem policzalnego momentum: oba ramiona mają różnić się rankingiem,
+  nie próbą. Kryterium identyczne z #5 (ADR-040).
+  **4b buy & hold** (diagnostyka): jedna długa noga na parę kohorty A,
+  1 R, od pierwszego rebalansu do końca okna. BEZ werdyktu i BEZ Sharpe'a —
+  FX nie ma broniącego się kierunku pasywnego, a jedna noga wrzuca całe R
+  w dzień wejścia, więc jej Sharpe byłby artefaktem przypisania.
+  Realizuje §10.2 #9 dla kohorty A. Testy tylko na syntetyku.
+- `compare_carry_only()` zwraca `(porównanie | None, powód)`. Ranking po samym
+  carry jest stabilny (stopy zmieniają się raz na miesiąc), więc na krótkim
+  oknie to ramię handluje rzadko i oś dzienna bywa za krótka na bloki —
+  wtedy brak liczby jest ZAPISANY, nie wyrzucony wyjątkiem. Kontrola #5
+  zachowuje się inaczej celowo: tam za krótka oś znaczy, że za krótkie jest
+  całe okno przebiegu.
 
-Dry run runnera z benchmarkiem (2016-01-05 → 2016-04-30, 6 par,
-`--allow-stale-bars`), powtórzony po ADR-041/042: wszystko liczy się do końca,
-**wszystkie pięć kotwic rebalansu pomija 0 tygodni** (przed naprawą ATR
-kotwica poniedziałkowa pomijała 16/16 — decyzja o 00:00 UTC czyta bar
-z niedzieli 23:00, a ten nie miał `atr_d1_14`). Koszyk daje ΔSharpe −0,1932,
-CI95 [−0,4794; +0,0125], 40 transakcji baseline, n_eff 9. Wynik bez znaczenia
-(4 miesiące), liczy się to, że okablowanie działa.
-Niezależnie od ATR: rebalans w niedzielę o 23:00 UTC zostaje nierealistyczny —
-to najcieńsza płynność tygodnia. Propozycja (NIE wykonana): przenieść decyzję
-na 16:00 Europe/London (fixing WM/Reuters, standardowy moment wyceny FX),
-trzymane jako czas lokalny + strefa, nigdy stały offset (ADR-034 pkt 4).
-Wymaga ADR-u, bo ADR-039 prerejestrował `rebalance_hour_utc: 0`.
+Czego NADAL nie ma (spec wymaga): kontrola §10.2 nr 10 (rozkład zerowy
+per kohorta); skrypty bramek 1–5; cała kohorta B.
+(#5 / benchmark §12 — ZROBIONA, `src/validation/benchmark.py`.
+ #4 — ZROBIONA, `src/validation/control4.py`.
+ #9 — zrobiona dla kohorty A jako ramię 4b; dla kohorty B otwarta.)
+
+Dry run runnera (2016-01-05 → 2016-04-30, 6 par, `--allow-stale-bars`),
+po ADR-041/042/043/044: wszystko liczy się do końca.
+
+- **Wszystkie pięć kotwic rebalansu pomija 0 tygodni.** Przed naprawą ATR
+  kotwica poniedziałkowa pomijała 16/16 — decyzja o 00:00 UTC czytała bar
+  z niedzieli 23:00, a ten nie miał `atr_d1_14`.
+- Koszyk §12 po przeniesieniu rebalansu na fixing 16:00 Londyn (ADR-043):
+  ΔSharpe −0,0649, CI95 [−0,2674; +0,1834]; przed zmianą −0,1932.
+  **Uczciwie: zmiana wyszła na korzyść strategii.** ADR-043 był napisany
+  przed uruchomieniem, motywacją jest płynność, a CI w obu przypadkach
+  obejmuje zero i okno ma cztery miesiące — to nie jest wynik, tylko
+  sprawdzenie okablowania.
+- Kontrola #4: ramię 4a (carry-only) **bez porównania** — oś dzienna ma
+  32 dni, bootstrap potrzebuje 40. Powód jest wypisany w raporcie.
+  To właściwość ramienia, nie awaria: ranking po samym carry zmienia się
+  raz na miesiąc. Na pełnym segmencie RESEARCH dni będzie dość.
+  Ramię 4b policzone: buy & hold długi na sześciu parach daje −8,15 R,
+  V1a −4,93 R (te liczby nic nie znaczą na czterech miesiącach).
+
+Niezależnie od ATR: rebalans w niedzielę o 23:00 UTC był nierealistyczny —
+to najcieńsza płynność tygodnia. Rozstrzygnięte przez ADR-043 na 16:00
+Europe/London (fixing WM/Reuters), trzymane jako czas lokalny + strefa,
+nigdy stały offset (ADR-034 pkt 4).
 
 - Raport V1a podaje w logu decyzji DWIE kolumny: „pierwszy” (powód o najwyższym
   priorytecie ADR-033) i „zadziałał” (ile barów warunek obejmował niezależnie
@@ -582,13 +630,7 @@ strategii (N = 1), choć był kontrolą. Zachowawczo — zawyża N, nie zaniża.
 
 ## Co dalej — kolejność
 
-**1. Godzina rebalansu koszyka** (16:00 Europe/London zamiast 00:00 UTC).
-Osobny ADR, korygujący ADR-039. Po ADR-041 kotwica poniedziałkowa już działa
-(0/16 pominiętych tygodni), więc to nie jest już awaria — zostaje sam argument
-o realizmie: rebalans w niedzielę o 23:00 UTC to najcieńsza płynność tygodnia.
-Nie blokuje niczego; można zrobić przed bramką 0 albo po niej.
-
-**2. Gdy pobieranie dojdzie do końca 2021** (front sprawdzać komendą z góry):
+**1. Gdy pobieranie dojdzie do końca 2021** (front sprawdzać komendą z góry):
 `download_ticks.py --retry-failed`, potem `build_bars.py`, potem
 `scripts/gate0.py --end 2021-12-31`. W raporcie sprawdzić: „bez wyniku” ~0
 (ADR-026), połowa CI ≤ 0,05 R (ADR-025 c), 0 naruszeń podłogi, sekcja
@@ -599,7 +641,7 @@ Przy okazji przebudowy barów warto powtórzyć pomiar z
 `reports/atr_sunday_stub.md` na pełnym zakresie i sześciu parach — dotychczas
 jest z 2015-01…2016-04.
 
-**3. Dopiero po bramce 0: `scripts/run_v1a.py` BEZ `--dry-run`.**
+**2. Dopiero po bramce 0: `scripts/run_v1a.py` BEZ `--dry-run`.**
 To PRAWDZIWA próba — dokłada 7 do N w DSR i do limitu 50 prób. Uruchamiać
 raz. Wcześniej zmierzyć czas dry runem na pełnym roku z prawdziwymi
 kontrolami (`--control-reps 200 --pool-per-group 3000`): dry run na
@@ -607,7 +649,11 @@ kontrolami (`--control-reps 200 --pool-per-group 3000`): dry run na
 z liczbą transakcji RAZY liczba powtórzeń, więc ekstrapolacja z niego jest
 bezwartościowa. Potem bramka 1.
 
-**4. Zostają kontrole §10.2 nr 4, 9, 10** i skrypty bramek 1–5.
+**3. Zostaje kontrola §10.2 nr 10** (rozkład zerowy per kohorta — w dużej
+części czeka na kohortę B), **#9 dla kohorty B** i skrypty bramek 1–5.
+Z tego bez nowych danych da się zrobić `scripts/gate1.py`: kryterium bramki 1
+brzmi „kontrola losowa daje dodatnie expectancy = STOP", a sama kontrola
+już istnieje (`validation/controls.py`, `gate0.run_random_control`).
 
 Czego NIE robić: kohorty B (bramka 2 może zakończyć projekt), optymalizacji
 `run_v1a` (nie wiadomo jeszcze, czy jest za wolny), uruchamiania V1a przed
