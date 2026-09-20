@@ -35,15 +35,26 @@ class BootstrapResult:
     n_reps: int
 
 
+def business_day(ts: pl.Series) -> pl.Series:
+    """Dzień roboczy, do którego liczy się wejście; weekend → poniedziałek.
+
+    Blok bootstrapu to dzień, a sobota i niedziela nie mają własnych dni —
+    wejście z weekendu należy do najbliższego poniedziałku. Ta sama oś
+    musi obowiązywać wszędzie, gdzie porównujemy serie dzienne, więc
+    reguła siedzi w jednym miejscu.
+    """
+    day = ts.dt.date()
+    wd = day.dt.weekday()                       # 1 = pon ... 7 = nd
+    return (pl.DataFrame({"d": day, "wd": wd})
+            .select(pl.when(pl.col("wd") >= 6)
+                    .then(pl.col("d") + pl.duration(days=8 - pl.col("wd")))
+                    .otherwise(pl.col("d")).alias("d"))["d"])
+
+
 def daily_totals(trades: pl.DataFrame, value: str = "r") -> tuple[np.ndarray, np.ndarray]:
     """(suma wartości, liczba transakcji) dla każdego dnia roboczego od
     pierwszego do ostatniego wejścia; dni puste = (0, 0)."""
-    day = trades["ts"].dt.date()
-    wd = day.dt.weekday()                       # 1 = pon ... 7 = nd
-    day = (pl.DataFrame({"d": day, "wd": wd})
-           .select(pl.when(pl.col("wd") >= 6)
-                   .then(pl.col("d") + pl.duration(days=8 - pl.col("wd")))
-                   .otherwise(pl.col("d")).alias("d"))["d"])
+    day = business_day(trades["ts"])
     per_day = (pl.DataFrame({"d": day, "v": trades[value]})
                .group_by("d").agg(pl.col("v").sum().alias("s"), pl.len().alias("n")))
     axis = pl.date_range(day.min(), day.max(), "1d", eager=True)
