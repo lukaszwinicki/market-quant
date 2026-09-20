@@ -467,6 +467,25 @@ validation:
     block_days: 20
     replications: 10000
 
+  # Benchmark obowiązkowy z SPEC §12 (kontrola #5). ADR-038 zamyka blokadę
+  # z ADR-036: rentowności 2-letnich nie ma w jednej definicji dla ośmiu
+  # walut, a "8 walut vs USD" wymagałoby NZDUSD i USDCHF, czyli zmiany
+  # sekcji `instruments` (frozen: true). Carry mierzone punktem 3M,
+  # uniwersum zawężone do walut kohorty A. Sekcja NIE jest zamrożona.
+  benchmark_carry_trend:
+    carry_measure: "interbank_3m"        # było yield_2y (niedostępne)
+    carry_rate_month: "previous"         # jak ADR-035 pkt 2
+    currencies: [EUR, GBP, JPY, AUD, CAD]   # vs USD; było 8
+    long_top_n: 1                        # 1/5 ≈ proporcja 2/8 z §12
+    short_bottom_n: 1
+    momentum_lookback_months: 3
+    rebalance: "weekly"
+    stops: false
+    sizing: "equal_risk_atr"
+    report_note: >
+      Wynik porównania MUSI nieść zapis o zawężeniu (ADR-038 pkt 6)
+      i przedział ufności różnicy, nie dwie liczby punktowe.
+
   controls:
     - {id: 1,  name: random_entry_same_exit_same_sizing_same_count,
        purpose: "rozkład zerowy — NAJWAŻNIEJSZY BENCHMARK"}
