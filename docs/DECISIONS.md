@@ -718,6 +718,53 @@ Przy typowym stopie 1,1% marża 1,0% kosztuje 0,035 R na transakcję — **3,3×
 
 ---
 
+## ADR-039 — Interpretacja benchmarku §12: moment rebalansu, jednostka R, koszty i kryterium „pobity”
+
+**Status:** ACCEPTED · 2026-09-20 · **Doprecyzowuje:** PROJECT_SPEC §12, ADR-019, ADR-038 · **Dotyczy:** kontrola #5 z §10.2
+
+**Kontekst:** ADR-038 rozstrzygnął, CZYM mierzymy carry (`interbank_3m`) i na jakim uniwersum (5 walut kohorty A vs USD, long top-1 / short bottom-1). Nie rozstrzygnął, JAK koszyk liczyć. Spec §12 mieści się w sześciu wierszach — „raz w tygodniu”, „równe ryzyko, sizing przez ATR”, „musi zostać pobity” — i każdy z nich ma po kilka rozsądnych odczytów. Bez ich zapisania decyzje zapadłyby w trakcie pisania kodu, czyli po cichu i już po tym, jak zobaczylibyśmy pierwsze liczby.
+
+To ten sam zabieg, co ADR-033 dla reguły V1a: jeden ADR, który czyta niejednoznaczne miejsca, zanim powstanie kod.
+
+**Decyzja (każdy punkt to odczyt miejsca, w którym tekst był niejednoznaczny):**
+
+| Punkt | Odczyt |
+|---|---|
+| Dzień rebalansu | **Pięć nakładających się portfeli, po jednym na dzień tygodnia** (pon–pt), każdy rebalansowany co 7 dni; wynik koszyka to średnia z pięciu. Usuwa datę formowania jako parametr — technika portfeli nakładających się (Jegadeesh & Titman 1993) |
+| Chwila decyzji | Dzień kotwicy, 00:00 UTC; wejściem jest OSTATNI ZAMKNIĘTY bar H1 przed tą chwilą (`last_closed_bar`), nigdy arytmetyka na znacznikach |
+| Jednostka R | `1 R = labels.sl_multiple × atr_d1_14` pary, z ostatniego zamkniętego dnia przed decyzją. Koszyk nie ma stopu, ale **jednostka musi być ta sama co w strategii** — inaczej kontrola #5 porównuje dwie różne skale |
+| Kierunek waluty vs USD | Ekspozycja i zwrot dotyczą WALUTY, nie pary. Dla par USD-bazowych (USDJPY, USDCAD) long waluty = short pary |
+| Zwrot 3-miesięczny | `bid_close` z barów D1: `(cena_dziś / cena_63_dni_roboczych_temu − 1) × 100`, ze znakiem waluty vs USD. 63 dni robocze ≈ 3 miesiące. Bid po obu stronach — to sygnał, nie fill |
+| Carry | `interbank_3m(waluta) − interbank_3m(USD)` z miesiąca POPRZEDZAJĄCEGO decyzję (ADR-035 pkt 2, ADR-038 pkt 2) |
+| Suma w rankingu | **Dosłowna, jak w §12**: carry w punktach procentowych rocznie plus zwrot w procentach. Bez normalizacji |
+| Koszty | Spread i poślizg **tylko przy ZMIANIE pozycji** — waluta, która zostaje w koszyku, nie jest przehandlowana (stąd „znikomy obrót” z ADR-019). Finansowanie za każdy dzień trzymania wg ADR-035, z obowiązkową osią marży wg ADR-037 |
+| Brak stopów | Pozycja żyje do następnego rebalansu, bez względu na obsunięcie |
+| Blackout, rollover, piątek | **NIE stosowane.** To warunki NO TRADE reguły V1a. Koszyk jest harmonogramem; pomijanie rebalansu byłoby regułą uznaniową i dołożyłoby benchmarkowi stopni swobody, których ADR-019 mu odmawia |
+| Brak danych | Tydzień, w którym którakolwiek z pięciu walut nie ma ATR albo zwrotu 3M, jest POMIJANY W CAŁOŚCI i policzony w raporcie. Ranking czterech walut to inny koszyk, nie ten sam z dziurą |
+| Rozgrzewka | 63 dni robocze zwrotu + 14 dni ATR; pierwszy rebalans nie wcześniej niż `trade_start` przebiegu |
+| Kategoria przebiegu | `kind="control"` (ADR-029). Koszyk benchmarkowy jest wejściem niezależnym od sygnału, więc NIE podnosi N w DSR ani nie zjada limitu prób |
+| Oś porównania | Dzienne sumy R obu serii na wspólnej osi dni roboczych (`bootstrap.business_day`), ten sam segment i ten sam okres |
+| Kryterium „pobity” | CI95 bootstrapu blokowego (20 dni roboczych) **różnicy** dziennych R, strategia minus koszyk, w całości powyżej zera |
+| Hold-out | Ta sama pieczęć co wszędzie (`load_h1` / `load_m1`), bez `unseal` |
+
+**Pomiar, który rozstrzygnął punkt „suma w rankingu”:** dla 17 poniedziałków 2016 r. z kompletem pięciu par (segment RESEARCH, jedyny okres z gotowymi barami w chwili pisania) przekrojowe odchylenie standardowe członu carry wyniosło 0,86 pp rocznie, a członu zwrotu 3-miesięcznego 3,61% — stosunek **4,2×**, mediana rozstępu odpowiednio 2,46 pp i 10,1%. Dosłowna suma jest więc rankingiem **zdominowanym przez momentum**, a carry rozstrzyga głównie remisy. To jest zapisane, a nie poprawiane: każda normalizacja odwracałaby proporcje w stronę, którą wybralibyśmy my.
+
+**Uzasadnienie pięciu kotwic:** ADR-019 uzasadnia obowiązkowość tego benchmarku tym, że ma on „praktycznie zerową liczbę stopni swobody”. Pojedynczy dzień rebalansu byłby dokładnie jednym stopniem swobody — cichym, bo nikt by go nie nazwał parametrem, i nietestowanym, bo koszyk nie ma siatki wrażliwości takiej jak V1a (ADR-028). Uśrednienie po wszystkich pięciu dniach usuwa ten wybór, a nie dokłada obrotu: każdy podportfel trzyma piątą część kapitału i rebalansuje się raz w tygodniu.
+
+**Uzasadnienie jednostki R:** V1a definiuje R jako odległość do stopu, czyli `2 × atr_d1_14`. Koszyk stopu nie ma, więc „1 R” trzeba mu nadać z zewnątrz. Nadanie `1 × atr_d1_14` byłoby wygodne i **dwukrotnie zawyżałoby** wynik koszyka względem strategii przy tej samej ekspozycji. Kontrola #5 porównuje dwie serie w R, więc R musi znaczyć to samo po obu stronach.
+
+**Odrzucone:**
+- *Jedna kotwica (np. poniedziałek), prerejestrowana.* Prostsze, ale wkłada do benchmarku obowiązkowego jeden nietestowany parametr. Benchmark z parametrem przestaje być tym, czym miał być.
+- *Z-score obu członów przed sumowaniem.* Usuwa dominację momentum i daje „zrównoważony” ranking carry + trend. Odrzucone, bo §12 mówi o sumie, a normalizacja to wielkość dobrana przez nas — i to dobrana w momencie, w którym już znamy jej wpływ.
+- *Annualizacja zwrotu 3-miesięcznego (×4).* Odwraca proporcję na korzyść momentum jeszcze silniej. Ten sam zarzut.
+- *Koszyk bez kosztów.* Łatwiejszy do pobicia, czyli optymistyczny dla H₁ — dokładnie ten kierunek błędu, którego ADR-024 zabrania.
+- *Przeniesienie na koszyk warunków NO TRADE z V1a (blackout, rollover, piątek).* Brzmi jak „sprawiedliwe porównanie”, w praktyce jest dostrajaniem benchmarku regułami strategii, którą ma oceniać.
+- *Porównanie expectancy NA TRANSAKCJĘ.* Strategia ma transakcje, koszyk ma ciągłą pozycję — „na transakcję” nie ma po stronie koszyka wspólnego mianownika. Dzienne R jest jedyną osią, która istnieje po obu stronach.
+
+**Konsekwencje:** parametry dopisane do `validation.benchmark_carry_trend`, sekcji **bez** `frozen: true`, więc `frozen_sha256` = `2eab678f…` zostaje bez zmian i prerejestracja z ADR-027..031 jest nienaruszona. Kryterium „pobity” jest ostrzejsze niż dosłowne brzmienie §10.2 („Musi zostać pobity”): wymaga przedziału ufności różnicy, a nie porównania dwóch liczb punktowych. Zaostrzenie jest świadome — ciężar dowodu leży po stronie H₁, a różnica dwóch hałaśliwych średnich rozstrzygnięta na trzecim miejscu po przecinku nie jest dowodem. Kod benchmarku nadal nie istnieje; ten ADR go opisuje, nie pisze.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
