@@ -37,13 +37,14 @@ Mediana, identyczna na wszystkich sześciu parach:
 |---|---|---|---|---|---|---|
 | 24 | 24 | 24 | 24 | 21 | — | **3** |
 
-Przepaść między niedzielą (3) a najkrótszym prawdziwym dniem (piątek, 21) jest
-na tyle duża, że **próg niepełnego dnia nie jest parametrem do strojenia** —
-każda wartość z przedziału 4–20 daje w tej próbie identyczny wynik.
+Przepaść między niedzielą (3) a najkrótszym typowym dniem (piątek, 21) jest
+duża, ale **nie pusta** — patrz sekcja 3b, gdzie próg jest wybierany na
+podstawie pomiaru, a nie tej tabeli.
 
 ## 3. Kikuty i deflacja ATR14
 
-Próg zastosowany w pomiarze: dzień z ≤ 6 barami H1.
+Próg zastosowany w tym skanie: dzień z ≤ 6 barami H1. Wybór progu docelowego
+— sekcja 3b.
 
 | para | dni | ndz | ndz = kikut | kikutów pon–pt | zakres ndz / dzień rob. | ATR z kikutami | ATR bez | Δ mediana | Δ parowane |
 |---|---|---|---|---|---|---|---|---|---|
@@ -66,6 +67,54 @@ Jedyny kikut poza niedzielą to **2015-01-01** (2 bary) na każdej parze — Now
 Rok, dzień rozpoznawany przez raport jakości jako zamknięcie, nie awaria. Próg
 łapie go poprawnie. GBPUSD ma dodatkowo 2016-04-29 z 3 barami, ale to artefakt
 granicy budowy barów, nie rynek.
+
+## 3b. Gdzie postawić próg niepełnego dnia
+
+Pomiar z sekcji 2 sugerował przepaść 3 → 21 i próg obojętny w całym tym
+przedziale. **To był artefakt progu ≤ 6 użytego w skanie.** Przegląd dób
+z 7–20 barami znalazł jeden dzień, który przy progu 6 przechodzi, a nie
+powinien:
+
+| dzień | barów H1 | co to jest |
+|---|---|---|
+| 2015-12-25 (pt) | 8 (wszystkie pary) | Boże Narodzenie, resztkowa sesja |
+| 2016-09-02 (pt) | 20 (EURUSD) | normalny piątek |
+| 2016-04-29, 2016-09-30 | 3–16 | ostatnia doba zbudowanej partycji, artefakt budowy |
+
+Zakres tych dni względem doby pełnej (mediana dni z > 20 barami):
+
+| para | 25.12.2015 (8 barów) | niedziela (3 bary) |
+|---|---|---|
+| EURUSD | 31,8% | 19,6% |
+| GBPUSD | 40,8% | 20,7% |
+| USDJPY | 36,0% | 25,1% |
+| AUDUSD | 48,8% | 23,1% |
+| USDCAD | **13,1%** | 19,5% |
+| EURJPY | 37,9% | 23,5% |
+
+Boże Narodzenie ma ten sam defekt co niedziela, tylko łagodniejszy — mediana
+~36% zakresu pełnej doby. Musi wypaść z szeregu z tego samego powodu.
+
+Piątek natomiast, mimo 21 barów zamiast 24, jest **dniem pełnym** — brakujące
+3 godziny to martwy wieczór po zamknięciu Nowego Jorku:
+
+| para | mediana zakresu pt | pon–czw | udział |
+|---|---|---|---|
+| EURUSD | 0,010670 | 0,009240 | 115,5% |
+| GBPUSD | 0,012540 | 0,011640 | 107,7% |
+| USDJPY | 0,989000 | 0,856000 | 115,5% |
+| AUDUSD | 0,008550 | 0,008660 | 98,7% |
+| USDCAD | 0,012260 | 0,011590 | 105,8% |
+| EURJPY | 1,194000 | 1,190000 | 100,3% |
+
+**Prawdziwa przepaść leży więc między 8 a 21 barami**, nie między 3 a 21.
+Próg **12 barów** („pół doby handlowej”) siedzi w jej środku. Wartości 9–20
+dają na tej próbie identyczny wynik; wartości ≤ 8 przepuszczają 25.12.
+
+Skutek uboczny, świadomy: próg wycina też ostatnią, uciętą dobę zbudowanej
+partycji (2016-04-29, 2016-09-30). Doba niepełna jest niepełna niezależnie
+od przyczyny, więc to zachowanie pożądane — a po przebudowie barów na pełnym
+zakresie te doby i tak będą kompletne.
 
 ## 4. Wpływ na rozkład etykiet
 
