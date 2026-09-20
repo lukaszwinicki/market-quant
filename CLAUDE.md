@@ -109,15 +109,69 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 ## Stan
 
 Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
-w tle, wznawialne; 2026-09-20 17:40 UTC front na **2020-06-06** (~50%
+w tle, wznawialne; 2026-09-20 18:30 UTC front na **2020-07-17** (~52%
 zakresu do 2025-12-31). Zmierzone tempo ~60–90 dni kalendarza na godzinę,
 niższe w latach o dużym obrocie. ETA: koniec 2021 (granica segmentu
-RESEARCH) ~8 h, koniec 2023 ~20 h, dziś ~36 h. **80** godzin `failed`
+RESEARCH) ~7 h, koniec 2023 ~19 h, dziś ~35 h. **81** godzin `failed`
 do dociągnięcia na końcu (liczba rośnie w trakcie — sprawdzać
 w `data/raw/manifest.jsonl`, nie ufać tej notatce):
 `download_ticks.py --retry-failed`.
 
-Gotowe (461 testów):
+---
+
+### ⚠ NAJWAŻNIEJSZA OTWARTA SPRAWA: `atr_d1_14` zaniżone o ~12%
+
+Znalezione 2026-09-20 przy pierwszym uruchomieniu benchmarku. **Nic nie
+zostało z tym zrobione — decyzja należy do użytkownika.**
+
+Sesja niedzielna (21:00–24:00 UTC) tworzy własny bar dzienny z **3 godzin**
+i wchodzi do ATR14 jako pełny dzień. Zmierzone na 2015–2016 (tyle barów jest
+zbudowane), EURUSD i USDJPY:
+
+| | EURUSD | USDJPY |
+|---|---|---|
+| dni w próbie / w tym niedziel | 415 / **69** | 415 / **69** |
+| mediana barów H1: pon–czw / niedziela | 24 / **3** | 24 / **3** |
+| mediana zakresu niedzieli vs dzień roboczy | **19,6%** | **25,1%** |
+| mediana ATR14 z niedzielami vs bez | **−13,2%** | **−10,9%** |
+
+69 z 69 niedziel to kikuty — co szósty „dzień” w szeregu. Przyczyna jest
+w `_attach_daily_volatility()` + `daily_bars()` (`src/features/technical.py`):
+`daily_bars` grupuje po kalendarzowej dobie, więc niedziela ma własny bar;
+`available` mapuje wartości dnia D na D+1, więc **bary niedzielne mają
+`atr_d1_14 = None`** (sobota nie ma bara), a **bary poniedziałkowe dostają
+ATR policzony z niedzielnego kikuta**.
+
+Skutki: po ADR-023 to `atr_d1_14` wyznacza bariery, więc SL/TP są o ~12%
+ciaśniejsze niż zakres pełnych dni; jednostka R jest o tyle mniejsza, czyli
+KAŻDA liczba w R jest o ~12% zawyżona co do modułu — łącznie ze zmierzonym
+na bramce 0 kosztem 0,0106 R. `vol_pct_252` liczy percentyle z tego samego
+szeregu.
+
+**Najgorszy element:** `data.d1_boundary` jest `frozen: true` na „00:00 UTC”
+i ma prerejestrowany test odporności na bramce 2 przeciwko „17:00 NY”
+i „22:00 UTC”. **Obie alternatywy kasują kikut całkowicie** (sesja niedzielna
+wpada do poniedziałku), więc test odporności tak jak zapisany zmierzy
+w dużej części artefakt kikuta i pokaże go jako „wynik zależy od granicy dnia”.
+
+**Dlaczego teraz:** jedyny istniejący wynik (pierwszy przebieg bramki 0) jest
+już unieważniony przez ADR-026, więc naprawa kosztuje dziś przeliczenie
+niczego. Po pierwszym prawdziwym przebiegu V1a będzie kosztowała unieważnienie
+próby strategii.
+
+Propozycja (NIE wykonana): ADR wykluczający niepełne dni z szeregu dziennego
+(próg liczby barów H1), przy niezmienionej granicy 00:00 UTC. Próg wpisany do
+`d1_boundary`, czyli sekcji zamrożonej — `frozen_sha256` się zmieni i
+unieważnienie będzie jawne, a nie ciche. Skrypt pomiarowy do odtworzenia:
+zliczyć bary H1 na dobę (`group_by ts.truncate("1d")`) i porównać
+`atr(daily_bars(h1), 14)` z ATR liczonym po odfiltrowaniu dni ≤ 6 barów.
+
+Pomiar zrobiony TYLKO na 2015–2016 i dwóch parach — przed ADR-em warto
+powtórzyć na wszystkich sześciu, gdy bary będą przebudowane.
+
+---
+
+Gotowe (490 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -415,6 +469,23 @@ Kryterium „pobity” jest ostrzejsze niż dosłowne §10.2: wymaga przedziału
 ufności RÓŻNICY, nie dwóch liczb punktowych.
 Parametry w `validation.benchmark_carry_trend`, `frozen_sha256` bez zmian.
 
+- `src/validation/benchmark.py` — koszyk §12 ZAIMPLEMENTOWANY (kontrola #5).
+  `spec_from(cfg)`, `usd_pairs()` (long waluty na parze USD-bazowej = short
+  pary), `ranking()` (None = tydzień niepełny → pomijany w całości),
+  `run_anchor()` / `run_benchmark()` (pięć podportfeli), `daily_series()`
+  (wspólna oś, koszyk = ŚREDNIA z kotwic), `compare()` (różnica Sharpe'ów,
+  wspólne bloki), `mean_open_risk()`. Koszyk emituje transakcje w TYM SAMYM
+  schemacie co strategia, więc `apply_financing`, `cost_ladder`,
+  `markup_ladder` i bootstrap działają na nim bez wyjątków; `sl` jest
+  syntetyczne (dokładnie 1 R od wejścia), bo tego wymaga `apply_financing`.
+  Rachunek kosztu identyczny z symulatorem; poślizg po obu stronach liczony
+  mnożnikiem WEJŚCIOWYM, bo wyjście to zlecenie rynkowe, nie stop.
+  Podpięte do runnera jako kontrola #5 (`--no-benchmark` wyłącza, raport
+  oznacza wtedy werdykt jako niepełny). Testy: `tests/test_benchmark.py`,
+  tylko syntetyk.
+- `daily_frames()` i `block_indices()` w `bootstrap.py` — wspólna oś dni dla
+  wielu serii i jedno losowanie bloków dla obu stron porównania.
+
 ADR-040 koryguje ADR-039 w jednym punkcie: porównanie idzie po SHARPIE serii
 dziennych R, nie po ich średniej. Powód zmierzony na dry runie — V1a trzyma
 średnio **4,38 R** jednocześnie otwartego ryzyka (limit portfela 6 R),
@@ -460,9 +531,22 @@ ma — V1a ma siatkę ADR-028, koszyk nie ma nic) oraz całą oś marży.
   Decyzja jest ta sama, różni się tylko przypisany powód (priorytet
   z ADR-033: 5 przed 6). Nie zmieniać bez nowego ADR-u.
 
-Czego NADAL nie ma (spec wymaga): kontrole §10.2 nr 4, 5, 9, 10;
-benchmark carry + trend (§12 — ADR-038 wybrał wariant, KODU NIE MA);
+Czego NADAL nie ma (spec wymaga): kontrole §10.2 nr 4, 9, 10;
 skrypty bramek 1–5; cała kohorta B.
+(Kontrola #5 / benchmark §12 — ZROBIONA, patrz `src/validation/benchmark.py`.)
+
+Dry run runnera z benchmarkiem (2016-01-05 → 2016-04-30, 6 par, 22 s,
+`--allow-stale-bars`): wszystko liczy się do końca, koszyk daje ΔSharpe
+−0,0728, CI95 [−0,4866; +0,1693]. Wynik bez znaczenia (4 miesiące), liczy
+się to, że okablowanie działa. **Ale kotwica poniedziałkowa pominęła 16/16
+tygodni** — bo decyzja o 00:00 UTC czyta bar z niedzieli 23:00, a ten nie ma
+`atr_d1_14` (patrz sekcja o niedzielnych kikutach wyżej). Widać to w raporcie
+w tabeli per kotwica, nie po cichu.
+Niezależnie od ATR: rebalans w niedzielę o 23:00 UTC jest nierealistyczny —
+to najcieńsza płynność tygodnia. Propozycja (NIE wykonana): przenieść decyzję
+na 16:00 Europe/London (fixing WM/Reuters, standardowy moment wyceny FX),
+trzymane jako czas lokalny + strefa, nigdy stały offset (ADR-034 pkt 4).
+Wymaga ADR-u, bo ADR-039 prerejestrował `rebalance_hour_utc: 0`.
 
 Następne (gdy pobieranie dojdzie do końca 2021): `download_ticks.py
 --retry-failed`, `build_bars.py`, potem `scripts/gate0.py` — przebieg
@@ -477,16 +561,37 @@ przed ADR-029 i nie ma pola `kind`, więc `n_trials()` liczy go jako próbę
 strategii (N = 1), choć był kontrolą. Zachowawczo — zawyża N, nie zaniża.
 `scripts/gate0.py` deklaruje już `kind="control"`.
 
-Runner V1a jest gotowy, więc po bramce 0: `scripts/run_v1a.py` bez
-`--dry-run` — to PRAWDZIWA próba, dokłada 7 do N w DSR i do limitu 50.
-Uruchamiać raz, po zamknięciu bramki 0 i po `build_bars.py` (inaczej
-`require_fresh_bars()` odrzuci partycje). Czasu NIE znamy: dry run
-na 4 miesiącach trwał 28 s, ale miał obcięte kontrole
-(`--control-reps 20` zamiast 200, `--pool-per-group 200` zamiast 3000).
-Sama część decyzyjna skaluje się liniowo z liczbą barów (~8 min na 6 lat),
-kontrole rosną z liczbą transakcji RAZY liczba powtórzeń — najpierw
-zmierzyć dry runem na roku, potem puszczać próbę.
-Potem bramka 1.
+## Co dalej — kolejność
 
-Równolegle (nie czeka na dane): kod benchmarku §12 wg ADR-038 —
-jedyna brakująca kontrola, która blokuje pełny werdykt bramki 2.
+**1. Rozstrzygnąć sprawę niedzielnych kikutów w `atr_d1_14`** (sekcja ⚠ wyżej).
+Blokuje wszystko inne, bo zmienia jednostkę R, a więc każdą liczbę, którą
+kiedykolwiek zaraportujemy. Najtańszy moment jest teraz — nie ma ważnego
+wyniku do unieważnienia. Kroki: powtórzyć pomiar na wszystkich sześciu
+parach, napisać ADR (próg niepełnego dnia w `d1_boundary`), zmienić kod,
+przyjąć nowy `frozen_sha256` i wpisać do ADR-u hash unieważniony.
+Decyzja należy do użytkownika — nie zmieniać `frozen: true` bez jego zgody.
+
+**2. Godzina rebalansu koszyka** (16:00 Europe/London zamiast 00:00 UTC).
+Osobny ADR, korygujący ADR-039. Można zrobić razem z punktem 1 albo po nim;
+kotwica poniedziałkowa i tak naprawi się częściowo po naprawie ATR, ale
+rebalans w niedzielę o 23:00 UTC zostaje nierealistyczny.
+
+**3. Gdy pobieranie dojdzie do końca 2021** (front sprawdzać komendą z góry):
+`download_ticks.py --retry-failed`, potem `build_bars.py`, potem
+`scripts/gate0.py --end 2021-12-31`. W raporcie sprawdzić: „bez wyniku” ~0
+(ADR-026), połowa CI ≤ 0,05 R (ADR-025 c), 0 naruszeń podłogi, sekcja
+„Koszt 1×, 2×, 3×”.
+
+**4. Dopiero po bramce 0: `scripts/run_v1a.py` BEZ `--dry-run`.**
+To PRAWDZIWA próba — dokłada 7 do N w DSR i do limitu 50 prób. Uruchamiać
+raz. Wcześniej zmierzyć czas dry runem na pełnym roku z prawdziwymi
+kontrolami (`--control-reps 200 --pool-per-group 3000`): dry run na
+4 miesiącach z obciętymi kontrolami trwał 22 s, ale kontrole rosną
+z liczbą transakcji RAZY liczba powtórzeń, więc ekstrapolacja z niego jest
+bezwartościowa. Potem bramka 1.
+
+**5. Zostają kontrole §10.2 nr 4, 9, 10** i skrypty bramek 1–5.
+
+Czego NIE robić: kohorty B (bramka 2 może zakończyć projekt), optymalizacji
+`run_v1a` (nie wiadomo jeszcze, czy jest za wolny), uruchamiania V1a przed
+zamknięciem bramki 0.
