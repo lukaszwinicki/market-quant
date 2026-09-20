@@ -35,6 +35,8 @@ from src.harness.market import (  # noqa: E402
     cost_model_for, load_h1, load_m1, require_fresh_bars,
 )
 from src.harness.registry import start_run  # noqa: E402
+from src.validation.cost_sensitivity import cost_ladder  # noqa: E402
+from src.validation.cost_sensitivity import render_markdown as render_cost_ladder  # noqa: E402
 from src.validation.gate0 import (  # noqa: E402
     Check, Gate0Result, assess, balanced_counts, contiguous_end, eligible_candidates,
     label_spec_from, make_evaluator, run_random_control, spread_profile,
@@ -150,7 +152,7 @@ def main() -> int:
 
         (run.dir / "gate0.md").write_text(
             render(run.run_id, params, result, spreads, quality_ok, quality_reasons,
-                   len(evaluate.memo), n_dropped), encoding="utf-8")
+                   len(evaluate.memo), n_dropped, labels), encoding="utf-8")
 
         passed = result.passed and quality_ok
         run.record(
@@ -170,7 +172,7 @@ def main() -> int:
 
 def render(run_id: str, params: dict, res: Gate0Result, spreads: dict[str, dict],
            quality_ok: bool, quality_reasons: list[str], n_unique: int,
-           n_dropped: int) -> str:
+           n_dropped: int, labels: pl.DataFrame) -> str:
     ok = res.passed and quality_ok
     g, n = res.pre_cost, res.net
     lines = [
@@ -210,6 +212,14 @@ def render(run_id: str, params: dict, res: Gate0Result, spreads: dict[str, dict]
            "części a i b."
            if res.resolution >= 1 else
            "Test odróżnia koszt policzony od pominiętego."),
+        "",
+        "## Koszt 1×, 2×, 3× (§9)",
+        "",
+        "Na losowych wejściach to nie jest kryterium — expectancy ma tu być "
+        "ujemne. Tabela jest w raporcie, żeby ten sam rachunek był widoczny "
+        "wszędzie, gdzie raportujemy expectancy.",
+        "",
+        render_cost_ladder(cost_ladder(labels)),
         "",
         "## Per para i kierunek",
         "",

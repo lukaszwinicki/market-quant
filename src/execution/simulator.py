@@ -111,6 +111,7 @@ class TradeResult:
     net: float            # gross - dopłata do podłogi (spread NIE drugi raz)
     risk: float           # |entry_intent - sl|, mianownik dla R
     ticks_scanned: int    # 0 = rozstrzygnięte na barach, >0 = schodziliśmy do ticków
+    slippage: float = 0.0  # poślizg zawarty w cenach fillów, wejście + wyjście
 
     @property
     def r(self) -> float:
@@ -164,7 +165,25 @@ def simulate_trade(
         side=side, entry=entry, exit=ex_fill, reason=reason,
         gross=gross, cost=implied + top_up, net=gross - top_up,
         risk=risk, ticks_scanned=scanned,
+        slippage=_slippage(reason, entry, ex_fill, cost),
     )
+
+
+def _slippage(reason: ExitReason, entry: Fill, exit_: Fill, cost: CostModel) -> float:
+    """Poślizg zawarty w cenach fillów, w jednostkach ceny.
+
+    Raportowany osobno WYŁĄCZNIE po to, żeby dało się przeliczyć wynik przy
+    2× i 3× kosztach (§9). Od `gross` nie odejmujemy go tu drugi raz — on
+    już siedzi w cenie (`_entry_fill`, `_stop_fill`).
+
+    Wyjście ma poślizg tylko na stopie. TP wymaga pełnego przekroczenia
+    poziomu, a luka rozlicza się po cenie otwarcia, która sama jest już
+    gorsza od bariery — dokładanie tam poślizgu byłoby liczeniem dwa razy.
+    """
+    at_entry = cost.entry_slippage_x_spread * entry.spread
+    at_exit = (cost.stop_slippage_x_spread * exit_.spread
+               if reason is ExitReason.STOP_LOSS else 0.0)
+    return at_entry + at_exit
 
 
 def _entry_fill(side: Side, bar: dict, cost: CostModel) -> Fill:
