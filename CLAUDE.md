@@ -452,9 +452,12 @@ strategii (N = 1), choć był kontrolą. Zachowawczo — zawyża N, nie zaniża.
 Runner V1a jest gotowy, więc po bramce 0: `scripts/run_v1a.py` bez
 `--dry-run` — to PRAWDZIWA próba, dokłada 7 do N w DSR i do limitu 50.
 Uruchamiać raz, po zamknięciu bramki 0 i po `build_bars.py` (inaczej
-`require_fresh_bars()` odrzuci partycje). Szacunek czasu: dry run
-na 4 miesiącach i 6 parach trwał 28 s, a koszt rośnie mniej więcej
-liniowo z liczbą barów decyzyjnych — 6 lat to rząd kilkudziesięciu minut.
+`require_fresh_bars()` odrzuci partycje). Czasu NIE znamy: dry run
+na 4 miesiącach trwał 28 s, ale miał obcięte kontrole
+(`--control-reps 20` zamiast 200, `--pool-per-group 200` zamiast 3000).
+Sama część decyzyjna skaluje się liniowo z liczbą barów (~8 min na 6 lat),
+kontrole rosną z liczbą transakcji RAZY liczba powtórzeń — najpierw
+zmierzyć dry runem na roku, potem puszczać próbę.
 Potem bramka 1.
 
 Równolegle (nie czeka na dane): kod benchmarku §12 wg ADR-038 —
