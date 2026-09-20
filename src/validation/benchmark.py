@@ -47,7 +47,7 @@ Koszyk emituje transakcje w TYM SAMYM schemacie co strategia (`symbol`,
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -77,6 +77,14 @@ class BenchmarkSpec:
     # to fixing WM/Reuters — 15:00 UTC latem, 16:00 UTC zimą.
     rebalance_time_local: dt.time = dt.time(16, 0)
     rebalance_timezone: str = "Europe/London"
+    # ADR-044: False daje ramię carry-only kontroli #4 — ta sama konstrukcja,
+    # ranking bez członu momentum. Reguła pomijania tygodni NIE zmienia się:
+    # #4a i #5 mają różnić się rankingiem, a nie próbą.
+    include_momentum: bool = True
+
+    def carry_only(self) -> BenchmarkSpec:
+        """Ablacja członu momentum — ramię 4a (ADR-044)."""
+        return replace(self, include_momentum=False)
 
     def moment_on(self, day: dt.date) -> dt.datetime:
         """Chwila rebalansu w dniu `day`, w UTC.
@@ -164,6 +172,11 @@ def ranking(day: dt.date, d1: dict[str, pl.DataFrame], rates: pl.DataFrame,
     ok. 4× większy rozrzut przekrojowy, więc ranking jest zdominowany przez
     momentum, a carry rozstrzyga głównie remisy. To jest zapisane, nie
     poprawiane — każda normalizacja byłaby wielkością dobraną przez nas.
+
+    `spec.include_momentum=False` daje ramię carry-only kontroli #4
+    (ADR-044). Momentum jest wtedy nadal LICZONE, bo decyduje o tym, czy
+    tydzień jest pełny — tylko nie wchodzi do wyniku. Inaczej #4a biegłoby
+    na innej próbie niż #5 i różnicy nie dałoby się przypisać rankingowi.
     """
     scores = {}
     for ccy, (sym, is_base) in pairs.items():
@@ -175,7 +188,7 @@ def ranking(day: dt.date, d1: dict[str, pl.DataFrame], rates: pl.DataFrame,
                      - rate_on(rates, "USD", day, spec.carry_kind))
         except KeyError:
             return None
-        scores[ccy] = carry + mom
+        scores[ccy] = carry + mom if spec.include_momentum else carry
     return scores
 
 

@@ -45,6 +45,10 @@ from src.strategy.v1a import grid_from, rules_from  # noqa: E402
 from src.validation.benchmark import (  # noqa: E402
     compare, daily_series, run_benchmark, spec_from,
 )
+from src.validation.control4 import (  # noqa: E402
+    CarryOnly, Control4, buy_and_hold_legs, compare_carry_only, run_carry_only,
+    summarize_buy_and_hold,
+)
 from src.validation.cpcv import CPCVSpec  # noqa: E402
 from src.validation.gate0 import eligible_candidates, label_spec_from  # noqa: E402
 
@@ -84,8 +88,10 @@ def main() -> int:
                     help="policz mimo partycji zbudowanych z wycinka cache "
                          "(wynik NIE jest wynikiem badawczym)")
     ap.add_argument("--no-benchmark", action="store_true",
-                    help="pomiń kontrolę #5 (koszyk §12). Raport oznaczy werdykt "
-                         "jako NIEPEŁNY — do użytku tylko przy diagnostyce")
+                    help="pomiń kontrole #5 (koszyk §12) i #4 (carry-only, "
+                         "buy & hold) — obie stoją na tej samej maszynerii. "
+                         "Raport oznaczy werdykt jako NIEPEŁNY; do użytku "
+                         "tylko przy diagnostyce")
     ap.add_argument("--dry-run", metavar="KATALOG", type=Path,
                     help="sprawdzenie okablowania: przebieg zapisuje się do "
                          "KATALOGU i NIE dopisuje próby do trials.jsonl, "
@@ -223,9 +229,43 @@ def main() -> int:
                      benchmark.comparison.difference, benchmark.comparison.ci_low,
                      benchmark.comparison.ci_high, time.monotonic() - t0)
 
+        # Kontrola #4 (ADR-044): carry-only to ABLACJA koszyka §12, więc
+        # liczy się na tej samej specyfikacji i w tym samym przebiegu.
+        # Buy & hold jest diagnostyką i nie ma werdyktu.
+        control4 = Control4()
+        if not args.no_benchmark:
+            bars = features[base.params.donchian_lookback]
+            co_anchor, co_stats = run_carry_only(
+                bars, rates, costs, symbols, spec_from(cfg),
+                window.trade_start, window.split_end)
+            co_anchor = {a: (apply_financing(f, rates, markup) if f.height else f)
+                         for a, f in co_anchor.items()}
+            bh = buy_and_hold_legs(bars, costs, symbols, spec_from(cfg),
+                                   window.trade_start, window.split_end)
+            if bh.height:
+                bh = apply_financing(bh, rates, markup)
+            co_cmp, co_note = compare_carry_only(
+                base.trades, co_anchor, block_days=params["block_days"],
+                n_reps=params["boot_reps"], seed=args.seed)
+            control4 = Control4(
+                carry_only=CarryOnly(
+                    comparison=co_cmp, note=co_note,
+                    per_anchor={a: (float(f["r"].mean()) if f.height else float("nan"))
+                                for a, f in co_anchor.items()},
+                    anchor_stats=co_stats),
+                buy_and_hold=summarize_buy_and_hold(bh, base.trades))
+            if co_cmp is not None:
+                log.info("kontrola #4: carry-only ΔSharpe %+.4f, CI95 [%+.4f, %+.4f], "
+                         "buy & hold %+.2f R, %.0f s", co_cmp.difference,
+                         co_cmp.ci_low, co_cmp.ci_high,
+                         control4.buy_and_hold.total_r, time.monotonic() - t0)
+            else:
+                log.warning("kontrola #4: carry-only BEZ PORÓWNANIA — %s", co_note)
+
         result = assess(variants, cfg, window, n_trials(REPO / TRIALS_FILE), controls,
                         block_days=params["block_days"], boot_reps=params["boot_reps"],
-                        seed=args.seed, cpcv=cpcv, benchmark=benchmark)
+                        seed=args.seed, cpcv=cpcv, benchmark=benchmark,
+                        control4=control4)
 
         base.trades.write_parquet(run.dir / "trades.parquet")
         base.decisions.write_parquet(run.dir / "decisions.parquet")

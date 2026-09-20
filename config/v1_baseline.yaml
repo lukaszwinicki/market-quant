@@ -530,6 +530,31 @@ validation:
       wynik per kotwica rebalansu (ADR-040 pkt 5) oraz całą oś marży
       (ADR-037).
 
+  # --- ADR-044: kontrola #4, dwa ramiona o różnym statusie -------------
+  control_buy_hold_carry_only:
+    # 4a — ramię ROZSTRZYGAJĄCE. Konstrukcja identyczna z koszykiem §12,
+    # jedyna różnica to wejście do rankingu: sam carry, bez zwrotu 3M.
+    # Zero parametrów swobodnych — znika nawet okno 63 dni.
+    carry_only:
+      ranking: "carry"                 # bez członu momentum
+      inherits: "validation.benchmark_carry_trend"
+      # Tygodnie pomijane wedle TEJ SAMEJ reguły co §12, łącznie z wymogiem
+      # policzalnego momentum — #4a i #5 mają różnić się rankingiem, nie próbą.
+      same_weeks_as_benchmark: true
+      comparison_statistic: "sharpe_of_daily_R"     # jak ADR-040
+      comparison_criterion: "CI95 różnicy Sharpe'ów (strategia − carry_only) > 0"
+
+    # 4b — DIAGNOSTYKA, nie próg. Realizuje zarazem §10.2 #9 dla kohorty A;
+    # #9 zostaje otwarte jako obowiązek dla kohorty B.
+    buy_and_hold:
+      side: "long"                     # każda para kohorty A
+      r_unit: "labels.sl_multiple * atr_d1_14"
+      is_threshold: false
+      # Bez Sharpe'a i bez werdyktu. FX nie ma broniącego się kierunku
+      # pasywnego, a jedna noga na parę wrzuca całe R w jeden dzień, więc
+      # jej Sharpe byłby artefaktem przypisania, nie wyniku (ADR-044).
+      report: "suma R per para + suma równoważona, obok sumarycznego R strategii"
+
   controls:
     - {id: 1,  name: random_entry_same_exit_same_sizing_same_count,
        purpose: "rozkład zerowy — NAJWAŻNIEJSZY BENCHMARK"}

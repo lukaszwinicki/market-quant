@@ -928,6 +928,56 @@ Konsekwencja jest jednak taka, że koszyk transaguje w **najcieńszej godzinie k
 
 ---
 
+## ADR-044 — Kontrola #4: carry-only jako próg, buy & hold jako diagnostyka
+
+**Status:** ACCEPTED · 2026-09-20 · **Doprecyzowuje:** PROJECT_SPEC §10.2 #4 i #9 · **Opiera się na:** ADR-038, ADR-039, ADR-040, ADR-043
+
+**Kontekst:** §10.2 wymienia kontrolę #4 jednym wierszem — „**Buy & hold / carry-only** — musi zostać pobity". To są dwa różne obiekty rozdzielone ukośnikiem, jedno słowo kryterium i zero definicji. Bez ich rozpisania decyzje zapadłyby przy pisaniu kodu, czyli po cichu.
+
+To ten sam zabieg, co ADR-033 dla reguły V1a i ADR-039 dla koszyka §12: ADR czyta niejednoznaczne miejsca, zanim powstanie kod. Spisany **przed** jakimkolwiek wynikiem V1a — `trials.jsonl` ma nadal jeden wpis, kontrolę bramki 0.
+
+**Decyzja: kontrola #4 ma dwa ramiona o różnym statusie.**
+
+### 4a — carry-only (ramię rozstrzygające)
+
+Konstrukcja **identyczna z koszykiem §12** (ADR-038/039/040/043): te same pięć walut vs USD, te same pięć kotwic rebalansu, ten sam moment (16:00 Europe/London), ta sama jednostka `1 R = sl_multiple × atr_d1_14`, ten sam rachunek kosztu, to samo finansowanie z osią marży, ta sama reguła pomijania tygodni.
+
+**Jedyna różnica: ranking liczy sam carry** — `interbank_3m(waluta) − interbank_3m(USD)` z miesiąca poprzedzającego decyzję — long top-1, short bottom-1. Człon zwrotu trzymiesięcznego znika.
+
+Kryterium „pobity" **identyczne z kontrolą #5** (ADR-040): Sharpe serii dziennych R, bootstrap blokowy 20 dni roboczych z blokami losowanymi RAZ dla obu serii, CI95 różnicy (strategia − carry-only) w całości powyżej zera.
+
+**Reguła pomijania tygodni zostaje z wymogiem policzalnego momentum**, mimo że carry-only go nie potrzebuje. Powód: #4a i #5 mają się różnić **dokładnie jedną rzeczą** — wejściem do rankingu — a nie także próbą. Carry-only niesie przez to 63-dniową rozgrzewkę, której nie używa; to nic nie kosztuje, bo strategia i tak ma własną, dłuższą (`vol_pct_252`).
+
+### 4b — buy & hold (diagnostyka, NIE próg)
+
+Long na każdej parze kohorty A, po 1 R (`sl_multiple × atr_d1_14` z wejścia), wejście w pierwszym momencie rebalansu okna, trzymane do końca, bez stopów. Jedna noga na parę, koszt raz, finansowanie za każdy dzień. Raportowane **per para** i jako suma równoważona, w R, obok sumarycznego R strategii.
+
+**Nie jest progiem i nie jest porównywane Sharpe'em.** Dwa powody, oba zapisane:
+
+1. **FX nie ma broniącego się kierunku pasywnego.** Long EURUSD jest dokładnie tak samo arbitralny jak short. „Przegrać z buy & hold" znaczyłoby wtedy tyle, że dolar akurat w tej próbie poszedł w jedną stronę — zdanie o próbie, nie o strategii. Dlatego §10.2 czyni #9 („buy & hold per instrument") obowiązkowym **na kohorcie B**: indeksy akcyjne mają realny dodatni dryf, a pary FX go nie mają, i to właśnie jest treść tej kontroli.
+2. **Niezgodność przypisania w czasie.** Każde R w tym projekcie jest przypisane do dnia WEJŚCIA (`daily_frames`). Strategia i koszyk emitują wiele krótkich nóg, więc ich serie dzienne są porównywalne. Jedna noga na parę wrzuciłaby całe swoje R w jeden dzień i jej Sharpe byłby artefaktem przypisania. Wycena dzienna (mark-to-market) dałaby z kolei serię gładką tam, gdzie tamte są poszarpane — czyli systematycznie ją faworyzowała. Żadna z dwóch wersji nie jest porównywalna, więc Sharpe nie jest podawany wcale.
+
+Zadanie 4b jest inne: **zmierzyć, ile z wyniku strategii dałby sam statyczny dryf kierunkowy**. To ta sama kwestia, co w kontroli #8 (expectancy osobno dla longów i shortów per instrument), widziana od zewnątrz zamiast od środka.
+
+4b realizuje zarazem §10.2 #9 dla kohorty A. **#9 zostaje otwarte jako obowiązek dla kohorty B**, gdzie dopiero staje się progiem.
+
+**Zapis o zawężeniu:** kryterium „musi zostać pobity" z §10.2 #4 stosuje się — wedle tego ADR-u — **wyłącznie do ramienia carry-only**. To jest zawężenie dosłownego brzmienia specyfikacji i jest świadome.
+
+**Dlaczego #4 nie jest zbędne obok #5:** ranking koszyka §12 jest zdominowany przez momentum — zmierzone w ADR-039, człon zwrotu ma 4,2× większy rozrzut przekrojowy niż człon carry, a carry rozstrzyga głównie remisy. Pobicie #5 mówi więc niewiele o tym, czy strategia bije **carry**. Ablacja jest jedyną rzeczą, która to mierzy. Carry-only ma przy tym **zero parametrów swobodnych** — znika nawet okno 63 dni — czyli spełnia argument ADR-019 („praktycznie zerowa liczba stopni swobody") ostrzej niż sam koszyk §12.
+
+**Odrzucone:**
+
+- *Klasyczny carry: wszystkie pięć walut wedle znaku różnicy stóp.* Podręcznikowa postać, ale zmienia wobec #5 dwie rzeczy naraz — wejście do rankingu I liczbę nóg — więc różnicy między #4a a #5 nie dałoby się przypisać. Ablacja zmienia jedną.
+- *Buy & hold jako próg.* Uzasadnienie w pkt 1 wyżej. Wysokość poprzeczki zależałaby od tego, w którą stronę poszedł dolar.
+- *„Lepsza z dwóch stron" (long albo short) jako poprzeczka buy & hold.* Benchmark dobrany po obejrzeniu danych; podnosi poprzeczkę o wielkość wybraną z wyniku.
+- *Rezygnacja z #4, skoro #5 jest policzone.* Patrz akapit wyżej — #5 mierzy głównie momentum.
+- *Inne kryterium niż w #5.* Dwie kontrole na dwóch skalach zapraszałyby do wybrania tej, która lepiej wypadnie.
+- *Mark-to-market dla 4b, żeby dało się policzyć Sharpe.* Dałoby serię gładką wobec poszarpanych — przewaga wynikająca z przypisania, nie z wyniku. Błąd w stronę benchmarku łatwiejszego do przegrania, czyli optymistyczny dla H₁ (ADR-024).
+
+**Konsekwencje:** parametry w `validation.control_buy_hold_carry_only`, sekcji **bez** `frozen: true`, więc `frozen_sha256` = `b77d0b69…` (po ADR-041) zostaje bez zmian. Przebieg jest `kind="control"` (ADR-029), więc nie podnosi N w DSR ani nie zjada limitu prób. Kontrola #4 nie została jeszcze policzona ani razu; ten ADR ją opisuje, nie liczy.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

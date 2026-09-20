@@ -64,6 +64,7 @@ from ..execution.simulator import CostModel
 from ..features.technical import compute_features
 from ..labels.triple_barrier import effective_sample_size, overlap_fraction
 from ..validation.benchmark import Comparison
+from ..validation.control4 import Control4, render_section as _control4_section
 from ..validation.bootstrap import BootstrapResult, block_bootstrap_expectancy, business_day
 from ..validation.controls import (
     counts_from, empirical_p_value, permutation_max_drawdown, shift_features,
@@ -412,6 +413,7 @@ class Assessment:
     effective_n: int
     controls: Controls
     benchmark: Benchmark
+    control4: Control4
     checks: list[Check]
 
     @property
@@ -421,9 +423,11 @@ class Assessment:
 
 def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
            controls: Controls, *, block_days: int, boot_reps: int, seed: int,
-           cpcv: CPCVSpec, benchmark: Benchmark | None = None) -> Assessment:
-    """Metryki bramki 2. Bez `benchmark` werdykt jest NIEPEŁNY (brak kontroli #5)."""
+           cpcv: CPCVSpec, benchmark: Benchmark | None = None,
+           control4: Control4 | None = None) -> Assessment:
+    """Metryki bramki 2. Bez `benchmark` albo `control4` werdykt jest NIEPEŁNY."""
     benchmark = benchmark or Benchmark()
+    control4 = control4 or Control4()
     base = next(v for v in variants if v.name == "baseline")
     trades = base.trades
     if not trades.height:
@@ -483,6 +487,7 @@ def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
               " · ".join(f"{lab}: {m:+.4f}" for lab, _, m in subs)),
         plateau_check(variants),
         benchmark_check(benchmark),
+        control4_check(control4),
     ]
 
     return Assessment(
@@ -490,7 +495,7 @@ def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
         dsr=dsr, pbo=pbo, split_r=split_expectancies(trades, cpcv),
         purge_share=purged, embargo_share=embargoed, subperiods=subs,
         per_symbol=per_symbol, overlap=overlap_fraction(trades), effective_n=eff_n,
-        controls=controls, benchmark=benchmark, checks=checks,
+        controls=controls, benchmark=benchmark, control4=control4, checks=checks,
     )
 
 
@@ -509,6 +514,28 @@ def benchmark_check(b: Benchmark) -> Check:
         f"ΔSharpe {c.difference:+.4f}, CI95 [{c.ci_low:+.4f}, {c.ci_high:+.4f}]; "
         f"strategia {c.strategy_sharpe:+.4f} przy {c.strategy_open_risk_r:.2f} R "
         f"otwartego ryzyka, koszyk {c.benchmark_sharpe:+.4f} przy "
+        f"{c.benchmark_open_risk_r:.2f} R")
+
+
+def control4_check(c4: Control4) -> Check:
+    """Kontrola #4 (ADR-044): rozstrzyga RAMIĘ CARRY-ONLY, nie buy & hold.
+
+    Buy & hold jest diagnostyką — FX nie ma broniącego się kierunku
+    pasywnego, więc poprzeczka zależałaby od tego, w którą stronę poszedł
+    dolar w próbie. Jak przy kontroli #5, brak liczby zostaje brakiem.
+    """
+    name = "kontrola #4: carry-only pobity (ADR-044)"
+    if not c4.carry_only.computed:
+        why = f" ({c4.carry_only.note})" if c4.carry_only.note else ""
+        return Check(name, False,
+                     f"NIE POLICZONA — werdykt bramki 2 jest niepełny "
+                     f"(ADR-044){why}")
+    c = c4.carry_only.comparison
+    return Check(
+        name, c4.carry_only.beaten,
+        f"ΔSharpe {c.difference:+.4f}, CI95 [{c.ci_low:+.4f}, {c.ci_high:+.4f}]; "
+        f"strategia {c.strategy_sharpe:+.4f} przy {c.strategy_open_risk_r:.2f} R "
+        f"otwartego ryzyka, carry-only {c.benchmark_sharpe:+.4f} przy "
         f"{c.benchmark_open_risk_r:.2f} R")
 
 
@@ -535,8 +562,9 @@ BENCHMARK_NARROWED = (
 )
 
 MISSING_CONTROLS = (
-    "Nie są liczone kontrole §10.2 nr 4 (buy & hold / carry-only), "
-    "9 (buy & hold per instrument) i 10 (rozkład zerowy per kohorta)."
+    "Nie jest liczona kontrola §10.2 nr 10 (rozkład zerowy per kohorta). "
+    "Kontrola nr 9 (buy & hold per instrument) jest policzona dla kohorty A "
+    "jako ramię 4b (ADR-044); dla kohorty B zostaje otwarta."
 )
 
 
@@ -724,6 +752,7 @@ def render(run_id: str, params: dict, a: Assessment) -> str:
         "wynik jest dodatni”.",
         "",
         *_benchmark_section(a.benchmark),
+        *_control4_section(a.control4),
     ]
     return "\n".join(lines) + "\n"
 

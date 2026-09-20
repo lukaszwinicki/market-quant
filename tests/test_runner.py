@@ -465,12 +465,15 @@ def test_full_grid_runs_end_to_end_and_renders_a_report(e2e):
     result = assess(variants, cfg, window, n_trials=7, controls=controls,
                     block_days=5, boot_reps=200, seed=1, cpcv=CPCVSpec(6, 2, 0, 0))
 
-    assert len(result.checks) == 10
+    assert len(result.checks) == 11
     # Bez policzonego koszyka kontrola #5 MUSI wypaść na czerwono — brak
     # liczby nie może być domyślnym „przeszło" (ADR-036 pkt 1).
-    fifth = [c for c in result.checks if "#5" in c.name]
-    assert len(fifth) == 1 and not fifth[0].passed
+    # Tak samo kontrola #4 (ADR-044).
+    for tag in ("#5", "#4"):
+        found = [c for c in result.checks if tag in c.name]
+        assert len(found) == 1 and not found[0].passed, tag
     assert not result.benchmark.computed
+    assert not result.control4.computed
     assert len(result.costs) == 3 and len(result.markups) == 3
     assert result.effective_n <= base.trades.height
     assert 0.0 <= result.dsr.dsr <= 1.0
