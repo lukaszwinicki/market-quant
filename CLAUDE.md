@@ -411,9 +411,21 @@ więc ranking jest zdominowany przez momentum, a carry rozstrzyga remisy;
 koszty tylko przy ZMIANIE pozycji plus finansowanie za każdy dzień; blackout
 i warunki NO TRADE V1a NIE są przenoszone na koszyk; tydzień bez kompletu
 5 walut pomijany w całości; przebieg to `kind="control"`, więc nie podnosi N.
-Kryterium „pobity” jest ostrzejsze niż dosłowne §10.2: CI95 bootstrapu
-blokowego RÓŻNICY dziennych R (strategia − koszyk) w całości powyżej zera.
+Kryterium „pobity” jest ostrzejsze niż dosłowne §10.2: wymaga przedziału
+ufności RÓŻNICY, nie dwóch liczb punktowych.
 Parametry w `validation.benchmark_carry_trend`, `frozen_sha256` bez zmian.
+
+ADR-040 koryguje ADR-039 w jednym punkcie: porównanie idzie po SHARPIE serii
+dziennych R, nie po ich średniej. Powód zmierzony na dry runie — V1a trzyma
+średnio **4,38 R** jednocześnie otwartego ryzyka (limit portfela 6 R),
+a koszyk zawsze dokładnie 2,00 R, więc różnica średnich faworyzowałaby
+strategię 2,2× bez grama przewagi (błąd optymistyczny dla H₁, zakazany
+przez ADR-024). Bloki bootstrapu losowane RAZ i stosowane do OBU serii —
+niezależne losowanie zerwałoby korelację dzienną (te same pary, te same dni)
+i rozdęłoby CI różnicy. Raport MUSI mimo bezskalowego kryterium podawać
+średnie otwarte ryzyko i średnie dzienne R obu serii, wynik per kotwica
+rebalansu (rozrzut po kotwicach to jedyna kontrola wrażliwości, jaką koszyk
+ma — V1a ma siatkę ADR-028, koszyk nie ma nic) oraz całą oś marży.
 
 - `src/strategy/runner.py` + `scripts/run_v1a.py` — runner V1a, GOTOWY,
   ale na prawdziwych danych jeszcze NIE uruchomiony jako próba.

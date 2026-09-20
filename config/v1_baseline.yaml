@@ -495,10 +495,18 @@ validation:
                                          # przehandlowana ("znikomy obrót")
     apply_blackout: false                # warunki NO TRADE należą do V1a
     skip_week_on_missing_currency: true  # ranking 4 walut to inny koszyk
-    comparison: "daily_R, block bootstrap 20d, CI95 różnicy > 0"
+    # ADR-040 koryguje ADR-039: porównanie po Sharpie, nie po średniej.
+    # Strategia trzyma średnio 4,38 R otwartego ryzyka, koszyk zawsze 2,00 R
+    # — różnica średnich dziennych R faworyzowałaby ją 2,2x bez przewagi.
+    comparison_statistic: "sharpe_of_daily_R"
+    comparison_ci: "block bootstrap 20d, te same bloki dla OBU serii"
+    comparison_criterion: "CI95 różnicy Sharpe'ów (strategia − koszyk) > 0"
     report_note: >
-      Wynik porównania MUSI nieść zapis o zawężeniu (ADR-038 pkt 6)
-      i przedział ufności różnicy, nie dwie liczby punktowe.
+      Wynik porównania MUSI nieść: zapis o zawężeniu uniwersum (ADR-038
+      pkt 6), przedział ufności RÓŻNICY zamiast dwóch liczb punktowych,
+      średnie otwarte ryzyko i średnie dzienne R obu serii (ADR-040 pkt 4),
+      wynik per kotwica rebalansu (ADR-040 pkt 5) oraz całą oś marży
+      (ADR-037).
 
   controls:
     - {id: 1,  name: random_entry_same_exit_same_sizing_same_count,
