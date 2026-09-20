@@ -109,15 +109,15 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 ## Stan
 
 Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
-w tle, wznawialne; 2026-09-20 14:48 UTC front na **2020-03-23** (~47%
+w tle, wznawialne; 2026-09-20 17:40 UTC front na **2020-06-06** (~50%
 zakresu do 2025-12-31). Zmierzone tempo ~60–90 dni kalendarza na godzinę,
 niższe w latach o dużym obrocie. ETA: koniec 2021 (granica segmentu
-RESEARCH) ~10 h, koniec 2023 ~22 h, dziś ~38 h. **77** godzin `failed`
+RESEARCH) ~8 h, koniec 2023 ~20 h, dziś ~36 h. **80** godzin `failed`
 do dociągnięcia na końcu (liczba rośnie w trakcie — sprawdzać
 w `data/raw/manifest.jsonl`, nie ufać tej notatce):
 `download_ticks.py --retry-failed`.
 
-Gotowe (431 testów):
+Gotowe (461 testów):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
@@ -373,9 +373,68 @@ Zamiennik musi być prerejestrowany przed bramką 2 — nie teraz, żeby nie
 wybierać wejścia do benchmarku po zobaczeniu wyniku strategii.
 `frozen_sha256` bez zmian (`2eab678f…`) — `costs` nie jest zamrożone.
 
+ADR-038 zamyka blokadę z ADR-036 (raport `reports/yield2y_sources.md`,
+zwiad 2026-09-20). Ustalenia: 2Y da się pozyskać, ale z ośmiu instytucji
+i w czterech różnych definicjach (zero-kuponowy spot z modelu — EUR/ECB,
+GBP/BoE spline, CHF/SNB; par yield CMT — USD/FRED; konkretna obligacja
+benchmarkowa — CAD/BoC; interpolacja/rynek wtórny — JPY/MoF, AUD/RBA,
+NZD/RBNZ), więc kryterium „ta sama definicja” jest niespełnialne, a §12
+to ranking PRZEKROJOWY, w którym stały bias per waluta się nie znosi.
+Trzy luki po stronie wydawcy: RBA skończyło dzienne AGS na 2023-06-07
+(następca `f2.1-data.csv` jest MIESIĘCZNY), RBNZ ma w 2020 28 obserwacji
+zamiast ~250, kostki SNB `rendoblid`/`rendoblim` stoją na 2025-07-31
+(inne kostki tego API są bieżące — serie wygaszone). OECD nie ma punktu
+2-letniego w ogóle: `CL_MEASURE` przepływu `DSD_STES@DF_FINMARK` wymienia
+tylko `IRLT` (≈10 lat), `IR3TIB` (3M), `IRSTCI` (overnight).
+Druga blokada, niezależna od rentowności: §12 chce 8 walut vs USD, czyli
+NZDUSD i USDCHF, a CHF jest wykluczony w `instruments` (`frozen: true`) —
+literalne §12 wymagałoby ruszenia sekcji zamrożonej.
+Pomiar przed wyborem (RESEARCH 2015-01…2021-12, hold-out nietknięty;
+przekrój miesięczny, ranking po 2Y vs po `interbank_3m`): Spearman
+mediana 0,976–1,000, noga short identyczna w 100% miesięcy, noga long
+rozjeżdża się w 17–30% (waluty na górze są ciasno skupione).
+Decyzja: carry mierzone `interbank_3m` (miesiąc poprzedni, jak ADR-035),
+uniwersum 5 walut kohorty A vs USD (EUR, GBP, JPY, AUD, CAD), long top-1
+/ short bottom-1. Parametry w `validation.benchmark_carry_trend` — sekcja
+NIE jest zamrożona, `frozen_sha256` bez zmian (`2eab678f…`).
+Cechy V1b `carry_2y`/`d_carry_20d` NIE są objęte ADR-038.
+
+- `src/strategy/runner.py` + `scripts/run_v1a.py` — runner V1a, GOTOWY,
+  ale na prawdziwych danych jeszcze NIE uruchomiony jako próba.
+  Kolejność: `preflight()` (pokrycie kalendarza + stóp; waluty z par
+  przebiegu, nie z całej kohorty) i `require_fresh_bars()` PRZED
+  `start_run(kind="strategy", n_variants=7)`, żeby zła konfiguracja nie
+  zjadała limitu prób. Dalej 7 wariantów (cechy raz na wartość kanału,
+  pamięć symulatora dzielona między 5 geometrii barier),
+  `apply_financing()` przed JAKĄKOLWIEK statystyką, drabinka 1×/2×/3×,
+  oś marży, bootstrap, DSR (N z `n_trials()`, `n_obs` = efektywne n,
+  wariancja Sharpe'a MIĘDZY wariantami), PBO na macierzy dzień × wariant,
+  płaskowyż ADR-028, podokresy, kontrole #1/#2/#3/#7. Raport
+  `runs/<id>/v1a.md` + `trades.parquet` + `decisions.parquet`.
+  `Window` rozdziela trzy daty: `data_start` (2015 — rozgrzewka cech, bez
+  decyzji), `trade_start` (2016-01-01 — pierwsza decyzja; kalendarz musi
+  pokrywać DOPIERO to), `split_end` (granica ADR-030).
+  **`--dry-run KATALOG`** — pełne okablowanie do katalogu tymczasowego,
+  BEZ wpisu do `trials.jsonl`; raport sam się oznacza jako dry run.
+  Sprawdzone tak na 2016-01…04 (6 par, 50 transakcji, 12 059 decyzji,
+  28 s): wszystkie sekcje raportu, wszystkie kategorie powodów poza
+  `7_data_gap` i `no_fill`, `trials.jsonl` nietknięty.
+  Testy tylko na syntetyku, z testem integracyjnym całej siatki.
+- Ścieżki CPCV są przy V1a ZDEGENEROWANE: reguła niczego nie dopasowuje,
+  więc transakcje grupy są identyczne w każdym podziale, w którym grupa
+  jest testowa — 5 ścieżek (ADR-031) odtwarza pełną próbę i nie mierzy
+  niczego. Raport podaje rozrzut po 15 PODZIAŁACH i udział próby zjadany
+  przez purge/embargo, i mówi o degeneracji wprost.
+- Drobiazg do zapamiętania: `5_portfolio` pojawia się w logu decyzji
+  (~1,4% barów), choć ADR-033 mówi, że limit 6 R „nigdy nie wiąże”.
+  Oba są prawdziwe — warunek `len(open_pos)+1 > 6` spełnia się przy
+  sześciu otwartych pozycjach, ale wtedy blokuje też `6_open_position`.
+  Decyzja jest ta sama, różni się tylko przypisany powód (priorytet
+  z ADR-033: 5 przed 6). Nie zmieniać bez nowego ADR-u.
+
 Czego NADAL nie ma (spec wymaga): kontrole §10.2 nr 4, 5, 9, 10;
-benchmark carry + trend (§12, blokada z ADR-036); runner V1a i skrypty
-bramek 1–5; cała kohorta B.
+benchmark carry + trend (§12 — ADR-038 wybrał wariant, KODU NIE MA);
+skrypty bramek 1–5; cała kohorta B.
 
 Następne (gdy pobieranie dojdzie do końca 2021): `download_ticks.py
 --retry-failed`, `build_bars.py`, potem `scripts/gate0.py` — przebieg
@@ -390,7 +449,13 @@ przed ADR-029 i nie ma pola `kind`, więc `n_trials()` liczy go jako próbę
 strategii (N = 1), choć był kontrolą. Zachowawczo — zawyża N, nie zaniża.
 `scripts/gate0.py` deklaruje już `kind="control"`.
 
-Równolegle (nie czeka na dane): kalendarz jest skończony, więc następny
-krok bez danych to runner V1a na harnessie (`kind="strategy"`, `n_variants=7`) —
-uruchamiać dopiero po zamknięciu bramki 0 i przy pełnym pokryciu
-kalendarza. Potem bramka 1.
+Runner V1a jest gotowy, więc po bramce 0: `scripts/run_v1a.py` bez
+`--dry-run` — to PRAWDZIWA próba, dokłada 7 do N w DSR i do limitu 50.
+Uruchamiać raz, po zamknięciu bramki 0 i po `build_bars.py` (inaczej
+`require_fresh_bars()` odrzuci partycje). Szacunek czasu: dry run
+na 4 miesiącach i 6 parach trwał 28 s, a koszt rośnie mniej więcej
+liniowo z liczbą barów decyzyjnych — 6 lat to rząd kilkudziesięciu minut.
+Potem bramka 1.
+
+Równolegle (nie czeka na dane): kod benchmarku §12 wg ADR-038 —
+jedyna brakująca kontrola, która blokuje pełny werdykt bramki 2.
