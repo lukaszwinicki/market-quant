@@ -549,6 +549,26 @@ Każdy inny brak danych przed barierą pozostaje `NO_DATA`, żeby awarie feedu n
 
 ---
 
+## ADR-034 — Kalendarz: kopie archiwalne jako źródło, znacznik zdarzenia bez publikowanej godziny, kryteria planowości
+
+**Status:** ACCEPTED · 2026-09-20 · **Doprecyzowuje:** ADR-032
+
+**Kontekst:** ADR-032 wymaga, żeby data i godzina pochodziły ze strony oficjalnej, parsowanej automatycznie, i żeby do kalendarza trafiały wyłącznie zdarzenia planowane. Przy dociąganiu 10 brakujących serii (BoE, ONS, BoJ, Statistics Bureau, RBA, ABS, BoC, StatCan, Eurostat) trzy sytuacje okazały się nieprzewidziane: część serwisów nie odpowiada skryptom albo usunęła archiwalne pliki; BoJ w ogóle nie publikuje godziny ogłoszenia decyzji po 2015 r.; a „planowość” trzeba rozstrzygać innym sygnałem w każdym źródle.
+
+**Decyzja:**
+
+1. **Kopia archiwalna jest dopuszczalnym nośnikiem strony oficjalnej.** Gdy serwis odpowiada skryptom 403 (rba.gov.au) albo usunął plik, który kiedyś publikował (roczne harmonogramy `stat.go.jp`), wolno czytać kopię z Wayback Machine (`web.archive.org/web/<znacznik>id_/<adres>`). Treść jest wiernym zapisem strony oficjalnej, a adres kopii zawiera adres źródłowy i moment zapisu, więc zostaje sprawdzalny. Dwa warunki: adres kopii trafia do `source`, a znacznik zapisu jest wybrany świadomie — dla harmonogramów bierzemy zapis sprzed opisywanego roku, bo to on dowodzi, że termin był znany z wyprzedzeniem. Zakaz z ADR-032 dotyczy pochodzenia treści (nie wolno jej wpisywać z pamięci), nie kanału dostępu.
+
+2. **Gdy źródło nie publikuje godziny zdarzenia, wolno użyć innego momentu z tego samego źródła, jeśli jest ściśle sprzężony z publikacją i udokumentowany.** BoJ podawał godzinę ogłoszenia tylko do 2015 r.; od 2016 nie ma jej ani na liście komunikatów, ani w komunikacie, ani po japońsku (metadane PDF to nie publikacja — dla 29.01.2016 `ModDate` wskazuje 13:59 JST, a rynek ruszył o 12:38). Znacznikiem `BOJ_RATE` jest więc godzina zakończenia posiedzenia z nagłówka protokołu. Zmierzone opóźnienie publikacji wynosi +7 min (M1 USDJPY, trzy posiedzenia 2016) i mieści się w oknie −30/+120 min, więc znacznika NIE przesuwamy o tę wartość: przesunięcie byłoby dopasowaniem do danych okresu testu. Protokół wychodzi ok. miesiąc po posiedzeniu, czyli minuta jest znana ex post — dopuszczalne, bo data posiedzenia jest ogłaszana z rocznym wyprzedzeniem, a blackout wyłącznie blokuje wejścia i nie niesie informacji o kierunku.
+
+3. **Planowość rozstrzyga sygnał z tego samego źródła, wskazany w module.** Nie ma jednej reguły dla wszystkich banków; każdy moduł nazywa swoją w docstringu i wypisuje pominięte zdarzenia do logu. Przyjęte: RBA — data musi być w harmonogramie zapisanym przed rokiem (dla 2018, którego archiwum nie ma, zwrot „At its meeting today” w komunikacie); BoJ — protokół bez zwrotów „Unscheduled Monetary Policy Meeting” i „brought forward”; BoE — slug strony `<miesiąc>-<rok>` (posiedzenia nadzwyczajne mają inny) i publikacja w czwartek; BoC — data musi występować w rocznym komunikacie z harmonogramem; Fed — jak dotąd (lista posiedzeń planowanych).
+
+4. **Godzina jest przechowywana jako czas lokalny plus nazwa strefy, nigdy jako stały offset.** Przeliczenie na UTC robi `ZoneInfo` z datą publikacji, więc DST wchodzi automatycznie. Rozstrzygnięte empirycznie dla HICP flash: kalendarz Eurostatu podaje „11:00Z” zarówno dla zdarzeń zimowych, jak i letnich (gdyby pole było w UTC, letnie miałyby 09:00Z), a na M1 EURUSD zakres minuty względem mediany dnia daje 7,3× o 10:00 UTC w dniach zimowych i 3,7× o 09:00 UTC w letnich. Stały CET dawałby latem godzinę pudła. Uwaga odwrotna niż przy EBC (ADR-032, `calendar_ecb`), gdzie „CET” w komunikacie oznacza czas lokalny Frankfurtu — dlatego strefę ustala się per źródło i potwierdza na danych.
+
+**Konsekwencja dla weryfikacji godzin:** wpis w `config/calendar_times.yaml` niesie `local_time`, `timezone`, cytat, dowód i wynik testu na tickach; bez `verified: true` (potwierdzenie użytkownika) źródło nie wypuszcza zdarzeń. Tak potwierdzono 2026-09-20: `BOE_RATE` 12:00 Europe/London, `ONS_BULLETIN` 09:30 Europe/London (tylko styczeń 2016), `EA_HICP_FLASH` 11:00 Europe/Luxembourg.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

@@ -272,6 +272,9 @@ oceniająca sygnał V1a to też `strategy`); wejście tylko gdy cały horyzont
 mieści się w splicie (każda granica); CPCV 6/2 = 15 podziałów, 5 ścieżek.
 ADR-032: blackout 30 min przed … 120 min po, tylko zdarzenia planowane,
 terminy wyłącznie parsowane ze źródeł. ADR-033: interpretacja V1a/NO TRADE.
+ADR-034 (doprecyzowuje 032): kopie Wayback jako nośnik strony oficjalnej,
+znacznik BoJ = koniec posiedzenia z protokołu, kryteria planowości per źródło,
+godzina jako czas lokalny + strefa (nigdy stały offset).
 
 Kalendarz (2026-09-20): KOMPLETNY dla kohorty A, 1740 zdarzeń, 16 serii,
 `coverage_gaps()` puste dla 2016–2025 (sprawdzane też przez `require_coverage()`).
