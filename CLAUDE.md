@@ -109,10 +109,11 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 ## Stan
 
 Bramka 0 w toku. Pobieranie ticków Dukascopy (kohorta A, 2015 → dziś) leci
-w tle, wznawialne; 2026-09-19 było na 2016-04 (~11%). 18 godzin `failed`
-do dociągnięcia na końcu: `download_ticks.py --retry-failed`.
+w tle, wznawialne; 2026-09-20 było na 2017-09 (~25%; katalogi 2019–2020
+w EURUSD to próbki z testów dekodera). 18 godzin `failed` do dociągnięcia
+na końcu: `download_ticks.py --retry-failed`.
 
-Gotowe (290 testów):
+Gotowe (344 testy):
 - `src/data/` — downloader, resampling `tick → M1 → H1`, raport jakości
   (święta 25.12/1.01 rozpoznawane, nie liczone jako awarie)
 - `scripts/build_bars.py` — Parquet `data/bars/{m1,h1}/symbol=/year=`,
