@@ -17,6 +17,7 @@ sesji poniedziałkowej i są do niej przypisywane.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 
 import numpy as np
@@ -61,6 +62,50 @@ def daily_totals(trades: pl.DataFrame, value: str = "r") -> tuple[np.ndarray, np
     axis = axis.filter(axis.dt.weekday() <= 5).alias("d").to_frame()
     full = axis.join(per_day, on="d", how="left").fill_null(0).sort("d")
     return full["s"].to_numpy().astype(float), full["n"].to_numpy().astype(float)
+
+
+def daily_frames(frames: list[pl.DataFrame], value: str = "r"
+                 ) -> tuple[list[dt.date], np.ndarray]:
+    """(oś dni, macierz T × N): suma `value` na dzień, WSPÓLNA oś dla wszystkich.
+
+    `daily_totals` buduje oś z własnego minimum i maksimum każdej ramki, więc
+    dwie serie policzone osobno leżą na dwóch różnych osiach i nie da się ich
+    odjąć. Tu oś jest sumą dni występujących w którejkolwiek ramce; dzień bez
+    transakcji danej serii to zero, nie brak.
+    """
+    per_frame = []
+    for f in frames:
+        if f.height:
+            per_frame.append(pl.DataFrame({"d": business_day(f["ts"]), "v": f[value]})
+                             .group_by("d").agg(pl.col("v").sum().alias("s")))
+        else:
+            per_frame.append(pl.DataFrame(schema={"d": pl.Date, "s": pl.Float64}))
+
+    days = sorted({d for f in per_frame for d in f["d"].to_list()})
+    if not days:
+        return [], np.zeros((0, len(frames)))
+    axis = pl.DataFrame({"d": pl.Series(days, dtype=pl.Date)})
+    cols = [axis.join(f, on="d", how="left").fill_null(0.0)["s"].to_numpy()
+            for f in per_frame]
+    return days, np.column_stack(cols).astype(float)
+
+
+def block_indices(n_days: int, block_days: int, n_reps: int,
+                  rng: np.random.Generator) -> np.ndarray:
+    """Indeksy dni dla `n_reps` replikacji bootstrapu blokowego (kołowego).
+
+    Wydzielone z `block_bootstrap_expectancy`, żeby dwie serie dało się
+    przepróbkować TYMI SAMYMI blokami. Niezależne losowanie zerwałoby
+    korelację dzienną między nimi — a przy porównaniu strategii z koszykiem
+    (te same pary, te same dni) to ona decyduje o szerokości przedziału
+    ufności różnicy (ADR-040 pkt 3).
+    """
+    if n_days < 2 * block_days:
+        raise ValueError(f"{n_days} dni to za mało na bloki po {block_days}")
+    n_blocks = -(-n_days // block_days)
+    offsets = np.arange(block_days)
+    starts = rng.integers(0, n_days, size=(n_reps, n_blocks))
+    return ((starts[:, :, None] + offsets) % n_days).reshape(n_reps, -1)[:, :n_days]
 
 
 def block_bootstrap_expectancy(trades: pl.DataFrame, block_days: int = 20,
