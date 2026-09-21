@@ -26,8 +26,13 @@ w archiwum. Brakuje: kontrola §10.2 nr 10, skrypty bramek 1–5, kohorta B,
 (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY) — commit 8aec3f3. Partycje
 2022+ świadomie NIE zbudowane: pobieranie trwa, powstałyby niepełne lata.
 
-Pobieranie ticków leci w tle, wznawialne; front 2026-09-21 na **2024-05-20**,
-czyli segment RESEARCH (do końca 2021) jest pokryty w całości. Front:
+Pobieranie ticków leci w tle, wznawialne; front 2026-09-21 18:30 na
+**2024-07-01**, czyli segment RESEARCH (do końca 2021) jest pokryty w całości.
+Domyślny koniec downloadera to „dziś", więc dociąga też `validation`
+(2022–2023) i hold-out (2024–2025) — pobranie plików na dysk nie łamie
+pieczęci, bo tej pilnuje `load_h1`/`load_m1` (`SealedHoldoutError`). Tempo
+zmierzone z mtime plików: ~46 dni danych na godzinę, czyli ok. 12 h do końca
+hold-outu. Front:
 
 ```bash
 for p in EURUSD GBPUSD USDJPY AUDUSD USDCAD EURJPY; do \
@@ -87,65 +92,47 @@ lata, gdzie spread jest większy w stosunku do zmienności: 2015 0,00909 →
 
 ## Kwestie rozstrzygnięte przy zamykaniu bramki 0
 
-**1. 237 transakcji „bez wyniku" to ostatni bar
-tygodnia.** Raport `reports/gate0_dropped.md`. **215 z 237 (91%)** to bar
-piątkowy, którego moment decyzji wypada po zamknięciu rynku o 17:00 czasu
-Nowego Jorku: w czasie letnim bar 21:00 odpada w 100% przypadków, w zimowym
-bar 22:00 — rozkład miesięczny zgadza się z datami zmiany czasu co do
-przypadku. Dalsze 9 to zamknięcia świąteczne (24.12, 25.12, 31.12), 13 to
-pojedyncze godziny cienkiej płynności (głównie 21:00 UTC w dzień powszedni).
-**Z 3 godzin podejrzanych o awarię feedu nie pochodzi ANI JEDNA** — nie mają
-barów H1, więc nigdy nie weszły do puli kandydatów.
+Dwie: **237 transakcji „bez wyniku"** to w 91% bar piątkowy po zamknięciu
+rynku (objęty warunkiem `9_friday`, nowy ADR niepotrzebny), oraz **3 godziny
+bez danych** — ADR-045, zaimplementowane. Pełny zapis obu, z metodą i
+pułapkami (`evaluate.memo`, `gap_share` ≠ transakcje bez wyniku):
+`docs/PROGRESS_ARCHIVE.md`.
 
-Werdykt: gubienie zależy wyłącznie od znacznika czasu wejścia, nie od
-przyszłego przebiegu ceny — nie ma look-aheadu ani biasu optymistycznego.
-Ostrzeżenie ADR-026 się nie realizuje.
+---
 
-To NIE jest luka w regułach. Warunek `9_friday` („piątek po 15:00 NY",
-`config/v1_baseline.yaml:357`, `src/strategy/v1a.py:161`) obejmuje wszystkie
-te decyzje — wypadają o 17:00–18:00 czasu NY. Widać je w bramce 0 tylko
-dlatego, że kontrola losowa świadomie NIE stosuje warunków NO TRADE: testuje
-symulator, nie strategię, więc losuje też z barów, których V1a nigdy nie
-zagra. Dla bramki 0 to kierunek zachowawczy. **Nowy ADR niepotrzebny.**
+## Powtórzenie pomiaru niedzielnych kikutów — ZROBIONE (2026-09-21)
 
-Metoda na przyszłość: `evaluate.memo` (`src/validation/gate0.py:114`) trzyma
-transakcje bez etykiety jako wartości `None`, więc listy NIE trzeba odtwarzać
-przez powtórzenie losowania. UWAGA: kolumna „luki" w raporcie bramki 0 to
-`gap_share` (`src/validation/gate0.py:244`) — udział transakcji domkniętych
-**luką cenową** przez SL/TP, a NIE udział transakcji bez wyniku.
+`reports/atr_sunday_stub.md` §9, pełny segment RESEARCH 2015-01-01 →
+2021-12-31, sześć par. **Pomiar, nie próba** — bez `start_run`, N w DSR bez
+zmian. **ADR-041 potwierdzone, żadna liczba nie rusza decyzji ani pieczęci.**
 
-**2. 3 godziny bez danych — ADR-045, zaimplementowane.**
-Pomiar otoczenia pokazał, że nie są jednym zjawiskiem: **2016-09-02 18:00**
-(piątek) to prawdziwa dziura wewnątrz dnia handlowego (~1–2 h, 17:00 też
-zapadnięte), a **2017-12-24 22:00** i **2019-05-26 22:00** to opóźnione
-otwarcie tygodnia — cały blok 18:00–22:00 pusty, dane wracają o 23:00.
-Wszystkie 18 plików (3 × 6 par) ma 0 bajtów, w manifeście `status: "empty"`,
-więc odczyt musi pochodzić z otoczenia, nie z pliku.
+| | 2015-01…2016-04 | 2015–2021 |
+|---|---|---|
+| niedziel będących kikutem | 69/69 na parę | **363–364/363–364 na parę** |
+| deflacja ATR14 (parowana) | −10,7…−11,8% | **−10,3…−11,9%** |
+| udział TP | 10,2% → 6,5% | **9,0% → 5,9%** (−35,1% wzgl.) |
+| zawyżenie `cost_r` | +16,8% | **+16,0%** |
 
-ADR-045: jawna lista `data.quality.accepted_outages` (godzina + powód +
-dowód + data), `passes_gate_0()` nie blokuje na pozycjach z listy, raport
-je nadal drukuje ze śladem akceptacji. Detektor NIE jest osłabiany — żadnej
-ogólnej reguły „pusto przy weekendzie jest OK", bo ukryłaby awarię
-w poniedziałkowy poranek.
+Ramię „przed ADR-041" to funkcja wyjęta z commita `e5e9f0e~1`, sprawdzona co
+do wartości na syntetyku i na EURUSD 2017–2018. Kontrola negatywna (oba
+ramiona z tej samej funkcji) daje dokładnie zero różnicy.
 
-Kod w `src/data/quality.py` (`AcceptedOutage`, `accepted_outages_from()`,
-`partition_outages()`), podpięty w `scripts/gate0.py` i `scripts/build_bars.py`.
-`build_bars.py --report-only` przelicza raport jakości bez przebudowy barów.
-8 nowych testów, wszystkie na syntetyku; sprawdzone czterema mutacjami kodu,
-że faktycznie upadają (m.in. „lista akceptuje wszystko" i „akceptacja usuwa
-godzinę z detekcji"). Pozycja listy niedopasowana do żadnej wykrytej godziny
-nie blokuje, ale jest drukowana jako ostrzeżenie — literówka w dacie nie
-może zniknąć po cichu.
+Zgodność z bramką 0: ramię „po naprawie" daje `cost_r` 0,01143, bramka 0
+zmierzyła 0,01156 — dwie różne drogi losowania, różnica 1,1%.
+
+**Dwa doprecyzowania, oba bez skutków decyzyjnych:**
+1. Kikut niedzielny ma 3 bary latem (237 niedziel, otwarcie 21:00 UTC) i **2
+   zimą** (125 niedziel, otwarcie 22:00 UTC) — mediana 3 to przykrywała.
+2. Margines progu `min_h1_bars` to **11–20**, nie 9–20 jak podaje ADR-041
+   (tam z zastrzeżeniem „na tej próbie"). Na 7 latach są trzy Boże Narodzenia
+   po 10 barów. Próg 12 zostaje w środku przepaści; **nowy ADR niepotrzebny**,
+   ale nie wolno zejść poniżej 11, powołując się na zakres z ADR-041.
 
 ---
 
 ## Co dalej — kolejność
 
-**1. Powtórzenie pomiaru niedzielnych kikutów** na 2015–2021
-(`reports/atr_sunday_stub.md` jest z 2015-01…2016-04). Weryfikacja ADR-041
-na pełnym zakresie, bez wpisu do `trials.jsonl`.
-
-**2. `scripts/run_v1a.py` BEZ `--dry-run`** — bramka 0 jest zamknięta, więc
+**1. `scripts/run_v1a.py` BEZ `--dry-run`** — bramka 0 jest zamknięta, więc
 to jest odblokowane. **Ale to PRAWDZIWA próba**: dokłada 7 do N w DSR
 i do limitu 50 prób, nieodwracalnie. Uruchamiać raz i tylko za wyraźną zgodą
 użytkownika. Wcześniej zmierzyć czas dry runem na pełnym roku z prawdziwymi
@@ -155,7 +142,7 @@ z obciętymi kontrolami trwał ~25 s, ale kontrole rosną z liczbą transakcji
 RAZY liczba powtórzeń, więc ekstrapolacja z niego jest bezwartościowa.
 Potem bramka 1.
 
-**3. Zostaje kontrola §10.2 nr 10** (rozkład zerowy per kohorta — w dużej
+**2. Zostaje kontrola §10.2 nr 10** (rozkład zerowy per kohorta — w dużej
 części czeka na kohortę B), **#9 dla kohorty B** i skrypty bramek 1–5.
 Z tego bez nowych danych da się zrobić `scripts/gate1.py`: kryterium bramki 1
 brzmi „kontrola losowa daje dodatnie expectancy = STOP", a sama kontrola już
@@ -165,7 +152,7 @@ istnieje (`src/validation/controls.py`, `gate0.run_random_control`). Wzorzec:
 
 Czego NIE robić: kohorty B (bramka 2 może zakończyć projekt), optymalizacji
 `run_v1a` (nie wiadomo jeszcze, czy jest za wolny), uruchamiania V1a bez
-zgody użytkownika (patrz punkt 2), dotykania hold-outu 2024–2025.
+zgody użytkownika (patrz punkt 1), dotykania hold-outu 2024–2025.
 
 ---
 

@@ -10,6 +10,9 @@ jako ADR, obowiązująca specyfikacja w `docs/PROJECT_SPEC.md`.
 
 ### ROZSTRZYGNIĘTE 2026-09-20: `atr_d1_14` zaniżone o ~12% (ADR-041, ADR-042)
 
+> Liczby niżej są z okna 2015-01…2016-04. Pomiar powtórzono 2026-09-21 na
+> pełnym segmencie RESEARCH — `reports/atr_sunday_stub.md` §9, wynik ten sam.
+
 Sesja niedzielna (21:00–24:00 UTC) tworzyła własny bar dzienny z **3 godzin**
 i wchodziła do ATR14 jako pełny dzień. Pomiar powtórzony na **wszystkich
 sześciu parach** — raport `reports/atr_sunday_stub.md`:
@@ -514,3 +517,57 @@ Uwaga do `trials.jsonl`: jedyny wpis (`20260919T134506Z-c4710e`) powstał
 przed ADR-029 i nie ma pola `kind`, więc `n_trials()` liczy go jako próbę
 strategii (N = 1), choć był kontrolą. Zachowawczo — zawyża N, nie zaniża.
 `scripts/gate0.py` deklaruje już `kind="control"`.
+
+---
+
+### Kwestie rozstrzygnięte przy zamykaniu bramki 0
+
+**1. 237 transakcji „bez wyniku" to ostatni bar
+tygodnia.** Raport `reports/gate0_dropped.md`. **215 z 237 (91%)** to bar
+piątkowy, którego moment decyzji wypada po zamknięciu rynku o 17:00 czasu
+Nowego Jorku: w czasie letnim bar 21:00 odpada w 100% przypadków, w zimowym
+bar 22:00 — rozkład miesięczny zgadza się z datami zmiany czasu co do
+przypadku. Dalsze 9 to zamknięcia świąteczne (24.12, 25.12, 31.12), 13 to
+pojedyncze godziny cienkiej płynności (głównie 21:00 UTC w dzień powszedni).
+**Z 3 godzin podejrzanych o awarię feedu nie pochodzi ANI JEDNA** — nie mają
+barów H1, więc nigdy nie weszły do puli kandydatów.
+
+Werdykt: gubienie zależy wyłącznie od znacznika czasu wejścia, nie od
+przyszłego przebiegu ceny — nie ma look-aheadu ani biasu optymistycznego.
+Ostrzeżenie ADR-026 się nie realizuje.
+
+To NIE jest luka w regułach. Warunek `9_friday` („piątek po 15:00 NY",
+`config/v1_baseline.yaml:357`, `src/strategy/v1a.py:161`) obejmuje wszystkie
+te decyzje — wypadają o 17:00–18:00 czasu NY. Widać je w bramce 0 tylko
+dlatego, że kontrola losowa świadomie NIE stosuje warunków NO TRADE: testuje
+symulator, nie strategię, więc losuje też z barów, których V1a nigdy nie
+zagra. Dla bramki 0 to kierunek zachowawczy. **Nowy ADR niepotrzebny.**
+
+Metoda na przyszłość: `evaluate.memo` (`src/validation/gate0.py:114`) trzyma
+transakcje bez etykiety jako wartości `None`, więc listy NIE trzeba odtwarzać
+przez powtórzenie losowania. UWAGA: kolumna „luki" w raporcie bramki 0 to
+`gap_share` (`src/validation/gate0.py:244`) — udział transakcji domkniętych
+**luką cenową** przez SL/TP, a NIE udział transakcji bez wyniku.
+
+**2. 3 godziny bez danych — ADR-045, zaimplementowane.**
+Pomiar otoczenia pokazał, że nie są jednym zjawiskiem: **2016-09-02 18:00**
+(piątek) to prawdziwa dziura wewnątrz dnia handlowego (~1–2 h, 17:00 też
+zapadnięte), a **2017-12-24 22:00** i **2019-05-26 22:00** to opóźnione
+otwarcie tygodnia — cały blok 18:00–22:00 pusty, dane wracają o 23:00.
+Wszystkie 18 plików (3 × 6 par) ma 0 bajtów, w manifeście `status: "empty"`,
+więc odczyt musi pochodzić z otoczenia, nie z pliku.
+
+ADR-045: jawna lista `data.quality.accepted_outages` (godzina + powód +
+dowód + data), `passes_gate_0()` nie blokuje na pozycjach z listy, raport
+je nadal drukuje ze śladem akceptacji. Detektor NIE jest osłabiany — żadnej
+ogólnej reguły „pusto przy weekendzie jest OK", bo ukryłaby awarię
+w poniedziałkowy poranek.
+
+Kod w `src/data/quality.py` (`AcceptedOutage`, `accepted_outages_from()`,
+`partition_outages()`), podpięty w `scripts/gate0.py` i `scripts/build_bars.py`.
+`build_bars.py --report-only` przelicza raport jakości bez przebudowy barów.
+8 nowych testów, wszystkie na syntetyku; sprawdzone czterema mutacjami kodu,
+że faktycznie upadają (m.in. „lista akceptuje wszystko" i „akceptacja usuwa
+godzinę z detekcji"). Pozycja listy niedopasowana do żadnej wykrytej godziny
+nie blokuje, ale jest drukowana jako ostrzeżenie — literówka w dacie nie
+może zniknąć po cichu.
