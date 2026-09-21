@@ -59,6 +59,45 @@ MARKET_HOLIDAYS = {(12, 25), (1, 1)}
 MAX_HOLIDAY_RUN_HOURS = 36
 
 
+@dataclass(frozen=True)
+class AcceptedOutage:
+    """Godzina podejrzana o awarię, ręcznie zaakceptowana wg ADR-045.
+
+    Akceptacja jest jawną pozycją w configu, nie regułą w kodzie. Detektor
+    zostaje przeczulony — patrz docstring modułu — a każde odstępstwo od
+    jego werdyktu niesie powód, dowód i datę i jest drukowane w raporcie.
+    """
+    ts: dt.datetime
+    reason: str
+    evidence: str
+    accepted_on: str
+
+
+def accepted_outages_from(cfg: dict) -> list[AcceptedOutage]:
+    """Wczytaj `data.quality.accepted_outages` z configu (ADR-045).
+
+    Brak sekcji znaczy „nic nie zaakceptowano”, nie „akceptuj wszystko”.
+    Każda pozycja MUSI mieć wszystkie cztery pola — wpis bez dowodu byłby
+    cichym stopniem swobody.
+    """
+    raw = (cfg.get("data", {}).get("quality", {}) or {}).get("accepted_outages") or []
+    out = []
+    for i, item in enumerate(raw):
+        missing = {"hour_utc", "reason", "evidence", "accepted_on"} - set(item)
+        if missing:
+            raise ValueError(
+                f"data.quality.accepted_outages[{i}]: brak pól {sorted(missing)} "
+                "— ADR-045 wymaga godziny, powodu, dowodu i daty akceptacji")
+        ts = dt.datetime.fromisoformat(str(item["hour_utc"]))
+        if ts.tzinfo is None:
+            raise ValueError(
+                f"data.quality.accepted_outages[{i}]: `hour_utc` bez strefy "
+                "— godzina musi być jawnie w UTC")
+        out.append(AcceptedOutage(ts.astimezone(UTC), str(item["reason"]),
+                                  str(item["evidence"]), str(item["accepted_on"])))
+    return out
+
+
 @dataclass
 class QualityReport:
     symbol_coverage: pl.DataFrame          # per symbol: bary, luki, pokrycie
@@ -69,8 +108,40 @@ class QualityReport:
     invariant_errors: list[str] = field(default_factory=list)
     holiday_closures: pl.DataFrame | None = None  # 25.12 / 1.01 — nie awarie
 
-    def passes_gate_0(self, max_gap_pct: float = 5.0) -> tuple[bool, list[str]]:
-        """Kryterium z PROJECT_SPEC §15: luki > 5% barów na >= 2 parach = STOP."""
+    def partition_outages(
+        self, accepted: list[AcceptedOutage] | None = None,
+    ) -> tuple[list[dt.datetime], list[AcceptedOutage], list[AcceptedOutage]]:
+        """Podziel wykryte awarie wg listy akceptacji (ADR-045).
+
+        Zwraca `(nierozstrzygnięte, dopasowane, niedopasowane)`:
+
+        - nierozstrzygnięte — wykryte godziny BEZ pozycji na liście; te blokują,
+        - dopasowane — pozycje listy, które faktycznie odpowiadają wykrytej godzinie,
+        - niedopasowane — pozycje listy, których detektor nie wskazał.
+
+        Niedopasowane nie blokują, ale MUSZĄ być widoczne: literówka w dacie
+        albo pozycja po przebudowie danych znaczy, że lista przestała opisywać
+        rzeczywistość. Sama literówka nie jest groźna (prawdziwa awaria zostaje
+        wtedy nierozstrzygnięta i nadal blokuje), ale cicha rozbieżność
+        między listą a danymi już tak.
+        """
+        by_ts = {a.ts: a for a in (accepted or [])}
+        detected = ([] if self.suspected_outages.is_empty()
+                    else list(self.suspected_outages["ts"]))
+        outstanding = [ts for ts in detected if ts not in by_ts]
+        matched = [by_ts[ts] for ts in detected if ts in by_ts]
+        unmatched = [a for ts, a in by_ts.items() if ts not in set(detected)]
+        return outstanding, matched, sorted(unmatched, key=lambda a: a.ts)
+
+    def passes_gate_0(self, max_gap_pct: float = 5.0,
+                      accepted: list[AcceptedOutage] | None = None,
+                      ) -> tuple[bool, list[str]]:
+        """Kryterium z PROJECT_SPEC §15: luki > 5% barów na >= 2 parach = STOP.
+
+        `accepted` (ADR-045): godziny podejrzane o awarię, sprawdzone ręcznie
+        i zapisane w `data.quality.accepted_outages`. Nie blokują werdyktu.
+        Godzina wykryta, a NIEUJĘTA na liście, blokuje jak dotąd.
+        """
         reasons: list[str] = []
 
         bad = self.symbol_coverage.filter(pl.col("gap_pct") > max_gap_pct)
@@ -81,10 +152,12 @@ class QualityReport:
             )
         if self.invariant_errors:
             reasons.append(f"{len(self.invariant_errors)} naruszeń niezmienników barów")
-        if self.suspected_outages.height:
+        outstanding, _, _ = self.partition_outages(accepted)
+        if outstanding:
             reasons.append(
-                f"{self.suspected_outages.height} godzin podejrzanych o awarię feedu "
-                "— wymagają ręcznego sprawdzenia przed akceptacją danych"
+                f"{len(outstanding)} godzin podejrzanych o awarię feedu "
+                "— wymagają ręcznego sprawdzenia przed akceptacją danych "
+                "(ADR-045: pozycja w `data.quality.accepted_outages`)"
             )
         return (not reasons), reasons
 
@@ -287,9 +360,11 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
     )
 
 
-def render_markdown(report: QualityReport) -> str:
+def render_markdown(report: QualityReport,
+                    accepted: list[AcceptedOutage] | None = None) -> str:
     """Raport w Markdown — wersjonowany w repo jako dowód dla Bramki 0."""
-    ok, reasons = report.passes_gate_0()
+    ok, reasons = report.passes_gate_0(accepted=accepted)
+    outstanding, matched, unmatched = report.partition_outages(accepted)
     lines = [
         "# Raport jakości danych",
         "",
@@ -325,20 +400,53 @@ def render_markdown(report: QualityReport) -> str:
     lines += ["", "## Podejrzenie awarii feedu", ""]
     if report.suspected_outages.is_empty():
         lines.append("Brak — żadna godzina handlowa nie jest pusta u wszystkich par naraz.")
+    elif not outstanding:
+        lines.append(
+            f"Wykryto {report.suspected_outages.height}, wszystkie zaakceptowane "
+            "ręcznie — patrz sekcja niżej. Brak godzin nierozstrzygniętych.")
     else:
         lines += [
-            f"**{report.suspected_outages.height} godzin** bez danych u wszystkich par "
+            f"**{len(outstanding)} godzin** bez danych u wszystkich par "
             "jednocześnie, mimo że wg wyprowadzonego kalendarza są handlowe.",
             "",
             "To podpis awarii feedu, nie zamknięcia rynku. Wymaga ręcznego sprawdzenia "
-            "przed akceptacją danych — inaczej luka pozostanie niewidoczna dla backtestu.",
+            "przed akceptacją danych — inaczej luka pozostanie niewidoczna dla backtestu. "
+            "Akceptacja: pozycja w `data.quality.accepted_outages` (ADR-045).",
             "",
             "| Godzina UTC |", "|---|",
         ]
-        for ts in report.suspected_outages["ts"].head(50):
+        for ts in outstanding[:50]:
             lines.append(f"| {ts:%Y-%m-%d %H:%M} |")
-        if report.suspected_outages.height > 50:
-            lines.append(f"| ... jeszcze {report.suspected_outages.height - 50} |")
+        if len(outstanding) > 50:
+            lines.append(f"| ... jeszcze {len(outstanding) - 50} |")
+
+    # ADR-045: odstępstwo od werdyktu detektora musi być widoczne w raporcie,
+    # razem z dowodem. Inaczej akceptacja byłaby cichym stopniem swobody.
+    if matched or unmatched:
+        lines += ["", "## Zaakceptowane ręcznie (ADR-045)", ""]
+    if matched:
+        lines += [
+            f"**{len(matched)} godzin** wykrytych przez detektor i zaakceptowanych "
+            "jawnie w `data.quality.accepted_outages`. Detektor NIE został "
+            "osłabiony — każda z tych godzin nadal jest wykrywana.",
+            "",
+            "| Godzina UTC | Powód | Dowód | Zaakceptowano |", "|---|---|---|---|",
+        ]
+        for a in sorted(matched, key=lambda x: x.ts):
+            lines.append(f"| {a.ts:%Y-%m-%d %H:%M} | {a.reason} | {a.evidence} "
+                         f"| {a.accepted_on} |")
+    if unmatched:
+        lines += [
+            "",
+            f"**Uwaga: {len(unmatched)} pozycji listy akceptacji nie odpowiada "
+            "żadnej wykrytej godzinie.** Lista przestała opisywać dane — literówka "
+            "w dacie albo skutek przebudowy barów. Nie blokuje werdyktu (prawdziwa "
+            "awaria zostałaby nierozstrzygnięta i zablokowała), ale wymaga sprawdzenia.",
+            "",
+            "| Godzina UTC | Powód |", "|---|---|",
+        ]
+        for a in unmatched:
+            lines.append(f"| {a.ts:%Y-%m-%d %H:%M} | {a.reason} |")
 
     if report.holiday_closures is not None and not report.holiday_closures.is_empty():
         hol = report.holiday_closures.with_columns(pl.col("ts").dt.date().alias("d"))

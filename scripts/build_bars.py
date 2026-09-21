@@ -34,7 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data.dukascopy import decode_bi5  # noqa: E402
 from src.data.provenance import write_provenance  # noqa: E402
-from src.data.quality import build_report, render_markdown  # noqa: E402
+from src.data.quality import (  # noqa: E402
+    accepted_outages_from, build_report, render_markdown,
+)
 from src.data.resample import (  # noqa: E402
     FREQ_H1, FREQ_M1, bars_from_ticks, ticks_to_frame, validate_bars,
 )
@@ -150,6 +152,9 @@ def main() -> int:
     ap.add_argument("--report", type=Path,
                     default=ROOT / "reports" / "data_quality.md")
     ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("--report-only", action="store_true",
+                    help="nie przebudowuj barów, tylko przelicz raport jakości "
+                         "z partycji na dysku (np. po zmianie listy z ADR-045)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -163,23 +168,40 @@ def main() -> int:
     years = set(args.years) if args.years else None
 
     h1_by_symbol: dict[str, pl.DataFrame] = {}
-    for symbol in symbols:
-        h1 = build_symbol(symbol, args.cache, args.out, years)
-        if not h1.is_empty():
-            h1_by_symbol[symbol] = h1
+    if args.report_only:
+        # Raport jest funkcją barów na dysku, nie cache'u ticków, więc da się go
+        # przeliczyć bez przebudowy. Świadomie BEZ `require_fresh_bars()`:
+        # ten tryb odświeża sam raport, a świeżość partycji pilnuje runner
+        # przed przebiegiem (`src/data/provenance.py`).
+        for symbol in symbols:
+            parts = sorted((args.out / "h1" / f"symbol={symbol}").glob("year=*/bars.parquet"))
+            if years:
+                parts = [p for p in parts if int(p.parent.name.split("=")[1]) in years]
+            if parts:
+                h1_by_symbol[symbol] = pl.concat([pl.read_parquet(p) for p in parts]).sort("ts")
+                log.info("%s: %d barów H1 z %d partycji", symbol,
+                         h1_by_symbol[symbol].height, len(parts))
+    else:
+        for symbol in symbols:
+            h1 = build_symbol(symbol, args.cache, args.out, years)
+            if not h1.is_empty():
+                h1_by_symbol[symbol] = h1
 
     if not h1_by_symbol:
-        log.error("Nie zbudowano żadnych barów — czy cache jest pusty?")
+        log.error("Brak barów — czy cache jest pusty (albo partycje nie zbudowane)?")
         return 1
 
     if args.no_report:
         return 0
 
     report = build_report(h1_by_symbol)
+    # ADR-045: lista ręcznie zaakceptowanych godzin awarii. Raport drukuje ją
+    # razem z dowodem, więc odstępstwo od werdyktu detektora jest widoczne.
+    accepted = accepted_outages_from(cfg)
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(render_markdown(report), encoding="utf-8")
+    args.report.write_text(render_markdown(report, accepted), encoding="utf-8")
 
-    ok, reasons = report.passes_gate_0()
+    ok, reasons = report.passes_gate_0(accepted=accepted)
     log.info("Raport: %s", args.report)
     log.info("Bramka 0: %s", "PRZECHODZI" if ok else "NIE PRZECHODZI")
     for r in reasons:

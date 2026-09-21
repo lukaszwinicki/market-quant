@@ -1,11 +1,7 @@
 # Raport jakości danych
 
-> Wygenerowano: 2026-09-21 15:09 UTC
-> Bramka 0: **NIE PRZECHODZI**
-
-## Powody odrzucenia
-
-- 3 godzin podejrzanych o awarię feedu — wymagają ręcznego sprawdzenia przed akceptacją danych
+> Wygenerowano: 2026-09-21 16:16 UTC
+> Bramka 0: **PRZECHODZI**
 
 ## Pokrycie
 
@@ -31,15 +27,17 @@
 
 ## Podejrzenie awarii feedu
 
-**3 godzin** bez danych u wszystkich par jednocześnie, mimo że wg wyprowadzonego kalendarza są handlowe.
+Wykryto 3, wszystkie zaakceptowane ręcznie — patrz sekcja niżej. Brak godzin nierozstrzygniętych.
 
-To podpis awarii feedu, nie zamknięcia rynku. Wymaga ręcznego sprawdzenia przed akceptacją danych — inaczej luka pozostanie niewidoczna dla backtestu.
+## Zaakceptowane ręcznie (ADR-045)
 
-| Godzina UTC |
-|---|
-| 2016-09-02 18:00 |
-| 2017-12-24 22:00 |
-| 2019-05-26 22:00 |
+**3 godzin** wykrytych przez detektor i zaakceptowanych jawnie w `data.quality.accepted_outages`. Detektor NIE został osłabiony — każda z tych godzin nadal jest wykrywana.
+
+| Godzina UTC | Powód | Dowód | Zaakceptowano |
+|---|---|---|---|
+| 2016-09-02 18:00 | awaria feedu Dukascopy wewnatrz dnia handlowego, ~1-2 h | 17:00 = 4,5-8,9 kB (zapadniete ~10x), 18:00 = 0 na 6 parach, 19:00 = 20-40 kB; 1 bar H1 z 43 634 na pare, 0 transakcji bez etykiety (reports/gate0_dropped.md) | 2026-09-21 |
+| 2017-12-24 22:00 | opoznione otwarcie tygodnia (Wigilia) — rynek stal, nie awaria | caly blok 18:00-22:00 = 0 na 6 parach, dane wracaja o 23:00 (0,5-1,7 kB); brak barow w kazdym zrodle, wiec nie ma czego odzyskac | 2026-09-21 |
+| 2019-05-26 22:00 | opoznione otwarcie tygodnia — poniedzialek 27.05.2019 to Memorial Day i UK spring bank holiday | blok 18:00-22:00 = 0 na 6 parach, 23:00 = 0-53 B, 00:00 = 6-34 kB | 2026-09-21 |
 
 ## Zamknięcia świąteczne
 

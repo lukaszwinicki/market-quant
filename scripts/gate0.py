@@ -29,7 +29,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data.dukascopy import pip_size  # noqa: E402
-from src.data.quality import build_report  # noqa: E402
+from src.data.quality import accepted_outages_from, build_report  # noqa: E402
 from src.features.technical import compute_features  # noqa: E402
 from src.harness.market import (  # noqa: E402
     cost_model_for, load_h1, load_m1, require_fresh_bars,
@@ -148,7 +148,10 @@ def main() -> int:
                         params["boot_reps"], args.seed)
         result.checks.insert(1, martingale)
         n_dropped = sum(v is None for v in evaluate.memo.values())
-        quality_ok, quality_reasons = build_report(h1).passes_gate_0()
+        # ADR-045: godziny z `data.quality.accepted_outages` nie blokują
+        # werdyktu; wykryta godzina spoza listy blokuje jak dotąd.
+        quality_ok, quality_reasons = build_report(h1).passes_gate_0(
+            accepted=accepted_outages_from(cfg))
 
         (run.dir / "gate0.md").write_text(
             render(run.run_id, params, result, spreads, quality_ok, quality_reasons,

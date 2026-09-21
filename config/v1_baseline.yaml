@@ -170,6 +170,35 @@ data:
     gap_report_required: true
     dst_handling: "jawne, różne daty przełączenia US vs EU"
 
+    # ADR-045: godziny, które detektor awarii feedu wskazuje, a ręczne
+    # sprawdzenie je wyjaśniło. Detektor NIE jest osłabiany — pozostaje
+    # przeczulony, bo reguła "pusto przy weekendzie jest OK" ukryłaby
+    # awarię w poniedziałkowy poranek. Odstępstwa są jawną listą z dowodem.
+    #
+    # Dowód = rozmiary plików .bi5 w otoczeniu godziny, wszystkie 6 par.
+    # Wpis bez któregokolwiek z czterech pól jest błędem, nie ostrzeżeniem.
+    # Pozycja dopisana po zobaczeniu wyniku strategii byłaby dopasowaniem
+    # danych do wyniku — stąd wymóg daty akceptacji.
+    accepted_outages:
+      - hour_utc: "2016-09-02T18:00:00+00:00"
+        reason: "awaria feedu Dukascopy wewnatrz dnia handlowego, ~1-2 h"
+        evidence: "17:00 = 4,5-8,9 kB (zapadniete ~10x), 18:00 = 0 na 6 parach,
+                   19:00 = 20-40 kB; 1 bar H1 z 43 634 na pare, 0 transakcji
+                   bez etykiety (reports/gate0_dropped.md)"
+        accepted_on: "2026-09-21"
+      - hour_utc: "2017-12-24T22:00:00+00:00"
+        reason: "opoznione otwarcie tygodnia (Wigilia) — rynek stal, nie awaria"
+        evidence: "caly blok 18:00-22:00 = 0 na 6 parach, dane wracaja o 23:00
+                   (0,5-1,7 kB); brak barow w kazdym zrodle, wiec nie ma czego
+                   odzyskac"
+        accepted_on: "2026-09-21"
+      - hour_utc: "2019-05-26T22:00:00+00:00"
+        reason: "opoznione otwarcie tygodnia — poniedzialek 27.05.2019 to
+                 Memorial Day i UK spring bank holiday"
+        evidence: "blok 18:00-22:00 = 0 na 6 parach, 23:00 = 0-53 B,
+                   00:00 = 6-34 kB"
+        accepted_on: "2026-09-21"
+
   cohort_b_extra_requirements:
     - "osobny kalendarz sesji per instrument"
     - "osobny raport jakości — to CFD brokera, nie dane giełdowe"
