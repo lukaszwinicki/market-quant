@@ -73,18 +73,22 @@ tu look-aheadu ani biasu optymistycznego: nie odpadają transakcje przegrywając
 ani wygrywające, odpadają piątkowe wieczory. Ostrzeżenie z ADR-026 przed cichym,
 selektywnym gubieniem transakcji nie realizuje się.
 
-## Co to jednak ujawnia
+## To NIE jest luka w regułach — warunek 9 już to obejmuje
 
-Nic nie blokuje decyzji, której moment wypada **po piątkowym zamknięciu**.
-Kandydat powstaje, a potem znika po cichu, bo nie ma danych do wypełnienia
-zlecenia. To dokładne odbicie sytuacji, którą ADR-042 rozstrzygnął dla
-otwarcia niedzielnego: tam bary sesji niedzielnej „przestały być blokowane
-przypadkiem" i dostały jawny warunek NO TRADE `10_sunday_open`.
+Pierwsza interpretacja tego pomiaru brzmiała „brakuje warunku NO TRADE dla
+piątkowego zamknięcia, odbicie ADR-042". Jest błędna. Warunek istnieje:
+`{id: 9, rule: "piątek po 15:00 NY"}` (`config/v1_baseline.yaml:357`),
+zaimplementowany w `src/strategy/v1a.py:161` jako moment decyzji przeliczony
+na `America/New_York`, piątek, godzina ≥ 15:00.
 
-W kontroli losowej skutek jest nieszkodliwy (1% transakcji znika). W V1a
-oznaczałoby to, że strategia nigdy nie zawiera transakcji na ostatnim barze
-tygodnia — co jest zachowaniem poprawnym, ale wynikającym z braku danych,
-a nie z zapisanej reguły. Zgodnie z logiką ADR-042 powinien to być jawny
-warunek NO TRADE zaczepiony o moment decyzji, nie o bar, z granicą liczoną
-jako czas lokalny Nowego Jorku (17:00), nie jako stały offset UTC —
-inaczej granica rozjedzie się z czasem letnim, co widać w tabeli wyżej.
+Odpadające decyzje wypadają o **17:00–18:00 czasu NY** (22:00/23:00 UTC),
+więc `9_friday` obejmuje je wszystkie, w obu reżimach czasu i bez problemu
+z DST — bo warunek jest zapisany jako czas lokalny NY, nie jako offset UTC.
+Nowy ADR byłby duplikatem istniejącej reguły.
+
+Dlaczego te bary widać w bramce 0: kontrola losowa **świadomie nie stosuje
+warunków NO TRADE**. Jej zadaniem jest test negatywny symulatora, nie
+strategii, więc losuje z całej puli kandydatów — także z barów, których V1a
+nigdy by nie zagrał (piątkowy wieczór, sesja niedzielna). Dla samej bramki 0
+skutek jest zachowawczy: symulator jest sprawdzany na szerszym i cieńszym
+zbiorze barów niż ten, na którym pracuje strategia.

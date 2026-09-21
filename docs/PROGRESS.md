@@ -95,10 +95,12 @@ Werdykt: gubienie zależy wyłącznie od znacznika czasu wejścia, nie od
 przyszłego przebiegu ceny — nie ma look-aheadu ani biasu optymistycznego.
 Ostrzeżenie ADR-026 się nie realizuje.
 
-Ujawnia natomiast lukę w regułach: nic nie blokuje decyzji po piątkowym
-zamknięciu, więc kandydat powstaje i znika po cichu z braku danych. To odbicie
-sytuacji, którą ADR-042 rozstrzygnął dla otwarcia niedzielnego — patrz
-punkt 4 w „Co dalej".
+To NIE jest luka w regułach. Warunek `9_friday` („piątek po 15:00 NY",
+`config/v1_baseline.yaml:357`, `src/strategy/v1a.py:161`) obejmuje wszystkie
+te decyzje — wypadają o 17:00–18:00 czasu NY. Widać je w bramce 0 tylko
+dlatego, że kontrola losowa świadomie NIE stosuje warunków NO TRADE: testuje
+symulator, nie strategię, więc losuje też z barów, których V1a nigdy nie
+zagra. Dla bramki 0 to kierunek zachowawczy. **Nowy ADR niepotrzebny.**
 
 Metoda na przyszłość: `evaluate.memo` (`src/validation/gate0.py:114`) trzyma
 transakcje bez etykiety jako wartości `None`, więc listy NIE trzeba odtwarzać
@@ -124,17 +126,9 @@ jest strukturalny, więc to weryfikacja, nie niepewność.
 potem kod, potem domknięcie bramki 0 (werdykt w `docs/DECISIONS.md`).
 Najpierw ADR, potem kod — jak przy ADR-025 i ADR-044.
 
-**2. ADR o piątkowym zamknięciu** — jawny warunek NO TRADE dla decyzji
-wypadających po zamknięciu rynku, odbicie ADR-042 dla otwarcia niedzielnego.
-Zaczepiony o moment decyzji, nie o bar; granica jako 17:00 czasu lokalnego
-Nowego Jorku, nigdy stały offset UTC (ADR-034 pkt 4) — inaczej rozjedzie się
-z czasem letnim. Uzasadnienie i pomiar: `reports/gate0_dropped.md`.
-Dotyczy V1a, nie unieważnia bramki 0 (w kontroli losowej skutek to 1%
-transakcji znikających bez biasu).
+**2. Powtórzenie pomiaru niedzielnych kikutów** na 2015–2021.
 
-**3. Powtórzenie pomiaru niedzielnych kikutów** na 2015–2021.
-
-**4. Dopiero po bramce 0: `scripts/run_v1a.py` BEZ `--dry-run`.** To
+**3. Dopiero po bramce 0: `scripts/run_v1a.py` BEZ `--dry-run`.** To
 PRAWDZIWA próba — dokłada 7 do N w DSR i do limitu 50 prób, nieodwracalnie.
 Uruchamiać raz i tylko za zgodą użytkownika. Wcześniej zmierzyć czas dry
 runem na pełnym roku z prawdziwymi kontrolami
@@ -143,7 +137,7 @@ z obciętymi kontrolami trwał ~25 s, ale kontrole rosną z liczbą transakcji
 RAZY liczba powtórzeń, więc ekstrapolacja z niego jest bezwartościowa.
 Potem bramka 1.
 
-**5. Zostaje kontrola §10.2 nr 10** (rozkład zerowy per kohorta — w dużej
+**4. Zostaje kontrola §10.2 nr 10** (rozkład zerowy per kohorta — w dużej
 części czeka na kohortę B), **#9 dla kohorty B** i skrypty bramek 1–5.
 Z tego bez nowych danych da się zrobić `scripts/gate1.py`: kryterium bramki 1
 brzmi „kontrola losowa daje dodatnie expectancy = STOP", a sama kontrola już
