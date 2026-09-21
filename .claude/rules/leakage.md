@@ -1,15 +1,11 @@
----
-paths:
-  - "src/features/**"
-  - "src/labels/**"
-  - "src/validation/**"
-  - "src/execution/**"
-  - "src/strategy/**"
----
-
 # Checklista leakage'u (§10.4 PROJECT_SPEC.md)
 
-Przed każdym raportowanym wynikiem dotykającym tych ścieżek:
+Reguła jest bezwarunkowa (bez `paths:`), więc ładuje się w każdej sesji.
+Zawężenie do `src/features|labels|validation|execution|strategy` nie działało:
+reguła ścieżkowa wchodzi do kontekstu, gdy sesja CZYTA pasujący plik, a sesje
+walidacyjne uruchamiają `scripts/gate0.py` i czytają raport, nie kod.
+
+Przed każdym raportowanym wynikiem:
 
 - [ ] Wszystkie normalizacje w oknie rozszerzającym, tylko przeszłość
 - [ ] Żaden `fit()` nie widział danych testowych (w tym skaler, imputer, kalibrator)

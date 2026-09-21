@@ -56,7 +56,15 @@ pesymistycznie, nigdy optymistycznie.
 Decyzja o 10:00 może użyć wyłącznie bara 09:00. Używać `last_closed_bar()`,
 nigdy ręcznej arytmetyki na znacznikach czasu.
 
-Pełna checklista leakage'u: `PROJECT_SPEC.md` §10.4.
+**`scripts/run_v1a.py` bez `--dry-run` to PRAWDZIWA próba.** Dokłada 7 do N
+w Deflated Sharpe Ratio i do limitu 50 prób (`max_trials_before_gate_2`),
+nieodwracalnie. Uruchamiać wyłącznie po zamknięciu bramki 0 i za wyraźną
+zgodą użytkownika. Do sprawdzania okablowania służy `--dry-run KATALOG`.
+
+**Aktualna pieczęć: `frozen_sha256` = `b77d0b69…`** (ADR-041, unieważniła
+`2eab678f…`). Niezgodność hasha w przebiegu = wynik jest nieważny.
+
+Pełna checklista leakage'u: `PROJECT_SPEC.md` §10.4 i `.claude/rules/leakage.md`.
 
 ---
 
