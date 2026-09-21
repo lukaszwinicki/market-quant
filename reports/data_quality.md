@@ -1,33 +1,45 @@
 # Raport jakości danych
 
-> Wygenerowano: 2026-09-19 13:01 UTC
-> Bramka 0: **PRZECHODZI**
+> Wygenerowano: 2026-09-21 15:09 UTC
+> Bramka 0: **NIE PRZECHODZI**
+
+## Powody odrzucenia
+
+- 3 godzin podejrzanych o awarię feedu — wymagają ręcznego sprawdzenia przed akceptacją danych
 
 ## Pokrycie
 
 | Symbol | Bary H1 | Oczekiwane | Brakujące | Luki % | Od | Do |
 |---|---|---|---|---|---|---|
-| AUDUSD | 8,263 | 8,266 | 3 | 0.04 | 2015-01-01 | 2016-04-29 |
-| EURJPY | 8,265 | 8,266 | 1 | 0.01 | 2015-01-01 | 2016-04-29 |
-| EURUSD | 8,229 | 8,265 | 36 | 0.44 | 2015-01-01 | 2016-04-28 |
-| GBPUSD | 8,244 | 8,266 | 22 | 0.27 | 2015-01-01 | 2016-04-29 |
-| USDCAD | 8,264 | 8,266 | 2 | 0.02 | 2015-01-01 | 2016-04-29 |
-| USDJPY | 8,260 | 8,266 | 6 | 0.07 | 2015-01-01 | 2016-04-29 |
+| AUDUSD | 43,629 | 43,634 | 5 | 0.01 | 2015-01-01 | 2021-12-31 |
+| EURJPY | 43,630 | 43,634 | 4 | 0.01 | 2015-01-01 | 2021-12-31 |
+| EURUSD | 43,631 | 43,634 | 3 | 0.01 | 2015-01-01 | 2021-12-31 |
+| GBPUSD | 43,628 | 43,634 | 6 | 0.01 | 2015-01-01 | 2021-12-31 |
+| USDCAD | 43,628 | 43,634 | 6 | 0.01 | 2015-01-01 | 2021-12-31 |
+| USDJPY | 43,629 | 43,634 | 5 | 0.01 | 2015-01-01 | 2021-12-31 |
 
 ## Spread (w pipsach)
 
 | Symbol | close mediana | close p95 | max mediana | max p95 | max zaobserwowany | ticki/bar |
 |---|---|---|---|---|---|---|
-| AUDUSD | 1.10 | 2.40 | 1.60 | 6.30 | 35.00 | 2,933 |
-| EURJPY | 0.80 | 2.90 | 1.40 | 8.20 | 35.00 | 5,502 |
-| EURUSD | 0.30 | 1.20 | 0.80 | 3.90 | 34.30 | 3,724 |
-| GBPUSD | 1.00 | 3.20 | 1.60 | 8.10 | 39.70 | 3,404 |
-| USDCAD | 1.20 | 3.00 | 1.90 | 7.40 | 34.70 | 2,940 |
-| USDJPY | 0.40 | 1.50 | 0.80 | 4.60 | 32.50 | 3,169 |
+| AUDUSD | 1.00 | 2.20 | 1.40 | 5.50 | 35.00 | 2,631 |
+| EURJPY | 0.60 | 2.50 | 1.10 | 7.10 | 37.50 | 5,590 |
+| EURUSD | 0.30 | 1.10 | 0.60 | 3.40 | 34.40 | 3,582 |
+| GBPUSD | 0.90 | 3.40 | 1.50 | 8.10 | 40.00 | 3,668 |
+| USDCAD | 1.10 | 2.90 | 1.60 | 6.80 | 35.00 | 2,984 |
+| USDJPY | 0.30 | 1.30 | 0.70 | 4.20 | 35.00 | 2,927 |
 
 ## Podejrzenie awarii feedu
 
-Brak — żadna godzina handlowa nie jest pusta u wszystkich par naraz.
+**3 godzin** bez danych u wszystkich par jednocześnie, mimo że wg wyprowadzonego kalendarza są handlowe.
+
+To podpis awarii feedu, nie zamknięcia rynku. Wymaga ręcznego sprawdzenia przed akceptacją danych — inaczej luka pozostanie niewidoczna dla backtestu.
+
+| Godzina UTC |
+|---|
+| 2016-09-02 18:00 |
+| 2017-12-24 22:00 |
+| 2019-05-26 22:00 |
 
 ## Zamknięcia świąteczne
 
@@ -38,6 +50,18 @@ Godziny puste u wszystkich par w blokach dotykających 25.12 albo 1.01 (≤ 36 h
 | 2015-12-25 | 13 |
 | 2015-12-31 | 2 |
 | 2016-01-01 | 21 |
+| 2017-12-25 | 14 |
+| 2017-12-31 | 2 |
+| 2018-01-01 | 22 |
+| 2018-12-25 | 14 |
+| 2018-12-31 | 1 |
+| 2019-01-01 | 22 |
+| 2019-12-25 | 14 |
+| 2019-12-31 | 2 |
+| 2020-01-01 | 22 |
+| 2020-12-25 | 13 |
+| 2020-12-31 | 2 |
+| 2021-01-01 | 21 |
 
 ## Komórki niejednoznaczne
 
@@ -45,15 +69,15 @@ Pokrycie między 20% a 80% — ani stabilnie handlowe, ani zamknięte. Typowo gr
 
 | Symbol | Dzień tyg. | Godz. UTC | Pokrycie |
 |---|---|---|---|
-| AUDUSD | 5 | 21 | 39% |
-| AUDUSD | 7 | 21 | 59% |
-| EURJPY | 5 | 21 | 39% |
-| EURJPY | 7 | 21 | 59% |
-| EURUSD | 5 | 21 | 39% |
-| EURUSD | 7 | 21 | 58% |
-| GBPUSD | 5 | 21 | 39% |
-| GBPUSD | 7 | 21 | 59% |
-| USDCAD | 5 | 21 | 39% |
-| USDCAD | 7 | 21 | 59% |
-| USDJPY | 5 | 21 | 39% |
-| USDJPY | 7 | 21 | 59% |
+| AUDUSD | 5 | 21 | 34% |
+| AUDUSD | 7 | 21 | 65% |
+| EURJPY | 5 | 21 | 34% |
+| EURJPY | 7 | 21 | 65% |
+| EURUSD | 5 | 21 | 34% |
+| EURUSD | 7 | 21 | 65% |
+| GBPUSD | 5 | 21 | 34% |
+| GBPUSD | 7 | 21 | 65% |
+| USDCAD | 5 | 21 | 34% |
+| USDCAD | 7 | 21 | 65% |
+| USDJPY | 5 | 21 | 34% |
+| USDJPY | 7 | 21 | 65% |
