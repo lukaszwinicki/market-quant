@@ -571,3 +571,22 @@ Kod w `src/data/quality.py` (`AcceptedOutage`, `accepted_outages_from()`,
 godzinę z detekcji"). Pozycja listy niedopasowana do żadnej wykrytej godziny
 nie blokuje, ale jest drukowana jako ostrzeżenie — literówka w dacie nie
 może zniknąć po cichu.
+
+---
+
+### Bramka 0: wcześniejsze przebiegi i rozbicie kosztu (przeniesione 2026-09-21)
+
+Werdykt bramki 0 to run `20260921T161726Z-1e142d`. Wcześniejsze przebiegi
+tego samego pomiaru, zachowane w `trials.jsonl`: `20260921T151443Z-187ab1`
+(przed ADR-045, werdykt blokowany wierszem o lukach) i
+`20260921T160904Z-17fbe1` (po kodzie ADR-045, ale przed jego commitem —
+`git_dirty`, dlatego powtórzony). `20260919T134506Z-c4710e` to pierwszy
+przebieg, nieaktualny po ADR-026.
+
+**Koszt: ADR-041 działa, potwierdzone.** Na CAŁYM zakresie średni `cost_r`
+wychodzi 0,01156 R, czyli WIĘCEJ niż 0,0106 z pierwszego przebiegu — to nie
+regresja. Na dokładnie tym samym oknie co pierwszy przebieg
+(2015-01-01…2016-04-28, 4397 transakcji) koszt to **0,00906 R**, czyli
+**−14,5%** i zgodnie z `reports/atr_sunday_stub.md`. Reszta to późniejsze
+lata, gdzie spread jest większy w stosunku do zmienności: 2015 0,00909 →
+2019 **0,01503** → 2021 0,01311.
