@@ -81,17 +81,30 @@ lata, gdzie spread jest większy w stosunku do zmienności: 2015 0,00909 →
 
 ## Otwarte kwestie blokujące bramkę 0
 
-**1. 237 transakcji „bez wyniku" (1,0%).** Po ADR-026 spodziewane ~0.
-`metrics.json` podaje `n_unique_trades` 23 488 i `n_unique_dropped` 237.
-Ustalone: **w `labels.parquet` tych transakcji NIE MA** — kolumna `reason`
-ma tylko `time` (14 861), `sl` (7328), `tp` (1392), `gap_sl` (141),
-`gap_tp` (36). Odpadają więc przed etykietowaniem, czyli diagnostyka wymaga
-instrumentacji w `gate0.py`/`run_random_control`, a nie zapytania do parquetu.
-UWAGA: kolumna „luki" w raporcie bramki 0 to `gap_share`
-(`src/validation/gate0.py:244`) — udział transakcji domkniętych **luką cenową**
-przez SL/TP, a NIE udział transakcji bez wyniku. Nie używać jej do tej
-diagnozy. ADR-026 ostrzegał wprost przed cichym, wybiórczym gubieniem
-transakcji, więc 1% wymaga wyjaśnienia przed domknięciem bramki.
+**1. ROZSTRZYGNIĘTE 2026-09-21: 237 transakcji „bez wyniku" to ostatni bar
+tygodnia.** Raport `reports/gate0_dropped.md`. **215 z 237 (91%)** to bar
+piątkowy, którego moment decyzji wypada po zamknięciu rynku o 17:00 czasu
+Nowego Jorku: w czasie letnim bar 21:00 odpada w 100% przypadków, w zimowym
+bar 22:00 — rozkład miesięczny zgadza się z datami zmiany czasu co do
+przypadku. Dalsze 9 to zamknięcia świąteczne (24.12, 25.12, 31.12), 13 to
+pojedyncze godziny cienkiej płynności (głównie 21:00 UTC w dzień powszedni).
+**Z 3 godzin podejrzanych o awarię feedu nie pochodzi ANI JEDNA** — nie mają
+barów H1, więc nigdy nie weszły do puli kandydatów.
+
+Werdykt: gubienie zależy wyłącznie od znacznika czasu wejścia, nie od
+przyszłego przebiegu ceny — nie ma look-aheadu ani biasu optymistycznego.
+Ostrzeżenie ADR-026 się nie realizuje.
+
+Ujawnia natomiast lukę w regułach: nic nie blokuje decyzji po piątkowym
+zamknięciu, więc kandydat powstaje i znika po cichu z braku danych. To odbicie
+sytuacji, którą ADR-042 rozstrzygnął dla otwarcia niedzielnego — patrz
+punkt 4 w „Co dalej".
+
+Metoda na przyszłość: `evaluate.memo` (`src/validation/gate0.py:114`) trzyma
+transakcje bez etykiety jako wartości `None`, więc listy NIE trzeba odtwarzać
+przez powtórzenie losowania. UWAGA: kolumna „luki" w raporcie bramki 0 to
+`gap_share` (`src/validation/gate0.py:244`) — udział transakcji domkniętych
+**luką cenową** przez SL/TP, a NIE udział transakcji bez wyniku.
 
 **2. Brak ADR-u o ręcznej akceptacji 3 godzin bez danych.** Raport jakości
 nie ma mechanizmu akceptacji, więc albo powstaje ADR (kryterium akceptacji
@@ -106,12 +119,18 @@ jest strukturalny, więc to weryfikacja, nie niepewność.
 
 ## Co dalej — kolejność
 
-**1. Diagnostyka 237 transakcji bez wyniku.** Skrypt tylko do odczytu, bez
-nowego wpisu do `trials.jsonl`. Ustalić, czy gubienie jest wybiórcze
-(per para / rok / godzina), czy rozłożone równomiernie.
+**1. ADR o 3 godzinach bez danych** (2016-09-02 18:00, 2017-12-24 22:00,
+2019-05-26 22:00): kryterium ręcznej akceptacji + ślad w raporcie jakości,
+potem kod, potem domknięcie bramki 0 (werdykt w `docs/DECISIONS.md`).
+Najpierw ADR, potem kod — jak przy ADR-025 i ADR-044.
 
-**2. ADR o 3 godzinach bez danych**, potem ewentualnie kod akceptacji,
-potem domknięcie bramki 0 (werdykt w `docs/DECISIONS.md`).
+**2. ADR o piątkowym zamknięciu** — jawny warunek NO TRADE dla decyzji
+wypadających po zamknięciu rynku, odbicie ADR-042 dla otwarcia niedzielnego.
+Zaczepiony o moment decyzji, nie o bar; granica jako 17:00 czasu lokalnego
+Nowego Jorku, nigdy stały offset UTC (ADR-034 pkt 4) — inaczej rozjedzie się
+z czasem letnim. Uzasadnienie i pomiar: `reports/gate0_dropped.md`.
+Dotyczy V1a, nie unieważnia bramki 0 (w kontroli losowej skutek to 1%
+transakcji znikających bez biasu).
 
 **3. Powtórzenie pomiaru niedzielnych kikutów** na 2015–2021.
 
