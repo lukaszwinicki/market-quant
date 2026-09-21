@@ -1021,6 +1021,48 @@ Dowód uzupełniający: żadna z 237 transakcji bez etykiety w bramce 0 nie poch
 
 ---
 
+## ADR-046 — Operacjonalizacja kryterium bramki 1: trzy stany werdyktu, finansowanie wewnątrz rozkładu zerowego
+
+**Status:** ACCEPTED · 2026-09-21 · **Doprecyzowuje:** `gates.gate_1` i §15 „Gate 1 — rozkład zerowy" (bez zmiany wartości `frozen: true`)
+
+**Kontekst:** Kryterium brzmi „STOP, jeśli kontrola losowa daje dodatnie expectancy". Nie mówi trzech rzeczy: czy chodzi o średnią punktową, czy o wynik istotny; czy expectancy liczy się przed finansowaniem, czy po; ani co jest właściwym produktem bramki.
+
+Bramka 0 zmierzyła na tej samej kontroli (run `20260921T161726Z-1e142d`, 2015–2021, 23 758 transakcji): netto **−0,0110 R**, CI95 [−0,0294; +0,0076], średni koszt 0,01156 R, połowa CI 0,0186 R. Szum średniej jest **większy** od mierzonej wielkości — to ta sama rozdzielczość, którą ADR-025 opisał dla bramki 0. Przy takim stosunku sama losowość wyrzuca punktową średnią nad zero mniej więcej raz na osiem przebiegów, nawet gdy symulator jest bez zarzutu.
+
+**Decyzja:**
+
+1. **Trzy stany werdyktu**, liczone na expectancy netto całej próby (bootstrap blokowy, dzień jako blok — §10.2 #6):
+
+| Stan | Warunek | Co znaczy |
+|---|---|---|
+| `STOP` | dolny koniec CI95 > 0 | kontrola losowa zarabia istotnie — mierzymy nie to, co myślimy; projekt się kończy |
+| `NIEROZSTRZYGNIĘTE` | średnia ≥ 0, ale CI95 zawiera 0 | plus mieści się w szumie; rozstrzyga człowiek, nie skrypt |
+| `PRZECHODZI` | średnia < 0 i CI95 nie leży w całości powyżej zera | losowe wejścia tracą, tak jak mają |
+
+2. **Expectancy liczy się po koszcie I po finansowaniu** (ADR-035). Raport podaje obok liczbę sprzed finansowania (`r + financing_r`), porównywalną z bramką 0.
+
+3. **Produktem bramki jest rozkład zerowy**, nie werdykt: średnia R z każdego powtórzenia, zapisana jako `null.parquet` (ADR-013). Rozkład z mniej niż **30 powtórzeń** albo o zerowym rozrzucie nie jest produktem — werdykt `NIEROZSTRZYGNIĘTE` niezależnie od średniej.
+
+4. Ten rozkład **nie zastępuje** kontroli #1 w przebiegu V1a. Rozrzut średnich skaluje się jak 1/√(liczba transakcji w powtórzeniu), a bramka 2 porównuje strategię z kontrolą o tej samej liczebności co strategia (§10.2 #1) — tę liczy sam `run_v1a`.
+
+**Uzasadnienie:**
+
+- **Stan środkowy jest asymetrycznie tani.** Automatyczny `STOP` na punktowej średniej kończyłby projekt na podstawie szumu raz na osiem prawidłowych przebiegów. Automatyczne przejście („średnia nad zerem, ale nieistotna, więc w porządku") chowałoby prawdziwy błąd symulatora za szerokim CI — dokładnie ten błąd, który bramka ma łapać. Oba tryby awarii są ciche, więc stan środkowy jest jawny i wraca do człowieka z liczbą.
+- **Ta sama konstrukcja co w bramce 0** (ADR-025: wynik z CI szerszym od progu to „nierozstrzygnięte", nie „przechodzi"). Dwie bramki mierzące tę samą kontrolę nie powinny mieć dwóch różnych filozofii werdyktu.
+- **Finansowanie w środku**, bo rozkład zerowy musi żyć w tym samym świecie kosztów co wynik, z którym go porównujemy — tak samo robi kontrola #1 w `strategy/runner.py`. Swap jest kierunkowy, więc musi wejść przed jakąkolwiek statystyką.
+- **Próg 30 powtórzeń** bierze się z ziarnistości empirycznego p-value, 1/(1 + liczba powtórzeń): poniżej tego rozkład nie ma ogonów, a „rozkład zerowy" jest nazwą na kilka liczb. Domyślnie skrypt robi 200 powtórzeń.
+
+**Odrzucone:**
+
+- *Dwa stany, literalnie: każda dodatnia średnia to STOP.* Prostsze i surowsze, ale kończy projekt szumem raz na osiem przebiegów. Ciężar dowodu leży po stronie H₁ — to nie to samo co zgoda na losowy werdykt w drugą stronę.
+- *Próg tolerancji („STOP dopiero powyżej +0,02 R").* Wprowadza nową stałą, której nie da się wyprowadzić z niczego, co już jest prerejestrowane. CI95 jest wyprowadzalne z danych.
+- *Expectancy przed finansowaniem.* Inny świat kosztów niż wynik, z którym rozkład ma być porównywany w bramce 2.
+- *Wykluczenie blackoutu makro (§7.2) i limitu jednej pozycji na parę z puli kontroli.* Kusi, bo zbliża pulę do uniwersum strategii, ale kontrola #1 w `run_v1a` losuje z pełnej puli — rozkład bramki 1 przestałby być porównywalny z tym, co zobaczy bramka 2.
+
+**Konsekwencje:** dochodzą `src/validation/gate1.py` i `scripts/gate1.py` (kod wyjścia 0 = przechodzi, 1 = STOP, 3 = nierozstrzygnięte, 2 = brak danych). Przebieg jest `kind="control"`, więc nie podnosi N w DSR ani limitu prób. Nic w konfiguracji się nie zmienia — pieczęć `frozen_sha256` = `b77d0b69…` zostaje.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
