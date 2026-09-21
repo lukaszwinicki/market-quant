@@ -978,6 +978,49 @@ Zadanie 4b jest inne: **zmierzyć, ile z wyniku strategii dałby sam statyczny d
 
 ---
 
+## ADR-045 — Ręczna akceptacja godzin podejrzanych o awarię feedu
+
+**Status:** ACCEPTED · 2026-09-21 · **Doprecyzowuje:** ADR-025, ADR-026, `data.quality` · **Wynika z:** przebieg `20260921T151443Z-187ab1`
+
+**Kontekst:** `QualityReport.passes_gate_0()` blokuje werdykt, gdy `suspected_outages.height > 0`, z komunikatem „wymagają ręcznego sprawdzenia **przed akceptacją danych**". Sprawdzenie jest więc przewidziane — ale nie ma miejsca, w którym można zapisać jego wynik. Skutek: bramka 0 nie może przejść, choć wszystkie kryteria ADR-025 (a, b, c oraz spread z ticków) przechodzą. Na segmencie RESEARCH 2015–2021 detektor wskazuje trzy godziny. Kryterium bez mechanizmu akceptacji nie jest ostre — jest niespełnialne.
+
+**Pomiar (2026-09-21, rozmiary plików `.bi5` w otoczeniu każdej godziny, wszystkie sześć par):** trzy godziny NIE są jednym zjawiskiem.
+
+| Godzina UTC | Otoczenie | Odczyt |
+|---|---|---|
+| 2016-09-02 18:00 (piątek) | 17:00 = 4,5–8,9 kB, **18:00 = 0**, 19:00 = 20–40 kB | Dziura WEWNĄTRZ dnia handlowego. Dodatkowo 17:00 jest zapadnięte ~10× wobec 19:00, więc awaria obejmuje ~1–2 h. To prawdziwy podpis awarii feedu. |
+| 2017-12-24 22:00 (niedziela, Wigilia) | 18:00–22:00 = 0, **23:00 = 0,5–1,7 kB** | Tydzień otworzył się godzinę później niż zwykle w czasie zimowym. Brak danych, bo nie było handlu — nie awaria. |
+| 2019-05-26 22:00 (niedziela) | 18:00–22:00 = 0, 23:00 = 0–53 B, **00:00 = 6–34 kB** | To samo: opóźnione otwarcie tygodnia. Poniedziałek 2019-05-27 to Memorial Day i UK spring bank holiday. |
+
+Wszystkie 18 plików (3 godziny × 6 par) istnieje na dysku i ma **0 bajtów**, a w `data/raw/manifest.jsonl` widnieją jako `status: "empty", bytes: 0` — serwer odpowiedział pustą treścią, nie błędem. To dokładnie ten przypadek, przed którym broni docstring `src/data/quality.py`, więc odczyt musi pochodzić z OTOCZENIA, nie z samego pliku.
+
+Dowód uzupełniający: żadna z 237 transakcji bez etykiety w bramce 0 nie pochodzi z tych godzin (`reports/gate0_dropped.md`) — nie mają barów H1, więc nigdy nie weszły do puli kandydatów. Wkład tych godzin w gubienie próby jest dokładnie zerowy.
+
+**Decyzja:**
+
+1. Wprowadzamy jawną listę `data.quality.accepted_outages`. Każda pozycja niesie **godzinę UTC, powód, dowód i datę akceptacji**. `passes_gate_0()` nie blokuje na godzinach z listy; raport nadal je wypisuje, w osobnej sekcji „Zaakceptowane ręcznie", razem ze śladem akceptacji. Godzina nieujęta na liście blokuje jak dotąd.
+2. Akceptujemy trzy godziny wymienione w tabeli wyżej.
+3. **Detektora nie osłabiamy.** Nie dodajemy ogólnej reguły „pusty blok stykający się z weekendem = opóźnione otwarcie tygodnia", mimo że dwie z trzech godzin są dokładnie tym.
+
+**Uzasadnienie:**
+
+1. **Mechanizm jest już założony, brakuje tylko miejsca na wynik.** Komunikat `passes_gate_0()` mówi „przed akceptacją danych", czyli autor przewidział akceptację. Bez niej wiersz o lukach blokuje bramkę 0 na zawsze, niezależnie od tego, co pokaże symulator.
+2. **Lista jawna, a nie automatyczna reguła** — bo docstring `quality.py` stawia sprawę wprost: „Zakodowanie godzin sesji ukryłoby dokładnie te luki, które mamy znaleźć". Reguła „pusto przy weekendzie jest w porządku" ukryłaby prawdziwą awarię w poniedziałkowy poranek. Detektor ma pozostać przeczulony, a koszt przeczulenia — trzy pozycje na siedem lat — jest znikomy.
+3. **Skala.** Godzina piątkowa to 1 bar H1 na 43 634 na parę. Dwie niedzielne nie zabierają nic, bo tych barów nie ma w żadnym źródle — rynek stał.
+4. **Lista jest stopniem swobody, więc musi być widoczna.** Pozycja dopisana po obejrzeniu wyniku strategii byłaby dopasowaniem danych do wyniku. Dlatego każdy wpis niesie dowód i datę, raport go drukuje, a akceptacja następuje PRZED jakimkolwiek przebiegiem `kind="strategy"` — `trials.jsonl` ma na dziś dwa wpisy, oba kontrole bramki 0.
+
+**Odrzucone:**
+
+- *Zdjąć wiersz o lukach z werdyktu bramki 0.* Znosi kryterium, zamiast je rozstrzygnąć. Następna awaria byłaby niewidoczna, a to jest jedyna rzecz, przed którą ten moduł broni.
+- *Nauczyć klasyfikator opóźnionego otwarcia tygodnia.* Obejmuje 2 z 3 przypadków bez żadnej listy, więc kusi. Ukrywa jednak całą klasę prawdziwych awarii przy weekendzie — patrz pkt 2. Wolno to rozważyć osobnym ADR-em, jeśli lista urośnie na tyle, że jej prowadzenie stanie się uciążliwe.
+- *Dociągnąć te godziny ponownie i rozstrzygnąć empirycznie.* Rozsądne dla godziny piątkowej, ale nie zmienia decyzji: pusta odpowiedź po ponowieniu znaczy dziurę w archiwum Dukascopy, a niepusta wymaga przebudowy barów i powtórzenia bramki. Do zrobienia przy `--retry-failed` po zakończeniu pobierania — jako uzupełnienie dowodu, nie warunek akceptacji.
+- *Zaakceptować hurtowo wszystkie godziny `empty` u wszystkich par.* To zniesienie detektora inną drogą.
+- *Zaakceptować tylko dwie niedzielne, a piątkową uznać za blokującą.* Konsekwentne, ale kryterium bramki 0 dotyczy tego, czy symulator mierzy uczciwie, a nie czy archiwum jest kompletne. Jeden brakujący bar H1 na 43 634 nie zmienia żadnej z liczb a/b/c, co pokazuje wkład zerowy w gubienie próby.
+
+**Konsekwencje:** dochodzi `data.quality.accepted_outages` — sekcja **bez** `frozen: true`, więc pieczęć `frozen_sha256` = `b77d0b69…` (po ADR-041) zostaje bez zmian. `passes_gate_0()` zyskuje parametr z listą akceptacji, a raport jakości sekcję „Zaakceptowane ręcznie". Po zmianie kodu bramkę 0 należy przeliczyć, żeby werdykt w raporcie pochodził z kodu, a nie z komentarza — to kolejny przebieg `kind="control"`, nie podnosi N w DSR. Werdykt zależy wtedy wyłącznie od kryteriów ADR-025 a/b/c i wiersza o spreadzie, które przechodzą.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

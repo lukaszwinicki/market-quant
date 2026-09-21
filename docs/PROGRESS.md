@@ -108,10 +108,19 @@ przez powtórzenie losowania. UWAGA: kolumna „luki" w raporcie bramki 0 to
 `gap_share` (`src/validation/gate0.py:244`) — udział transakcji domkniętych
 **luką cenową** przez SL/TP, a NIE udział transakcji bez wyniku.
 
-**2. Brak ADR-u o ręcznej akceptacji 3 godzin bez danych.** Raport jakości
-nie ma mechanizmu akceptacji, więc albo powstaje ADR (kryterium akceptacji
-+ ślad w raporcie), albo bramka 0 zostaje formalnie otwarta. Najpierw ADR,
-potem kod — jak przy ADR-025 i ADR-044.
+**2. ROZSTRZYGNIĘTE 2026-09-21 przez ADR-045: 3 godziny bez danych.**
+Pomiar otoczenia pokazał, że nie są jednym zjawiskiem: **2016-09-02 18:00**
+(piątek) to prawdziwa dziura wewnątrz dnia handlowego (~1–2 h, 17:00 też
+zapadnięte), a **2017-12-24 22:00** i **2019-05-26 22:00** to opóźnione
+otwarcie tygodnia — cały blok 18:00–22:00 pusty, dane wracają o 23:00.
+Wszystkie 18 plików (3 × 6 par) ma 0 bajtów, w manifeście `status: "empty"`,
+więc odczyt musi pochodzić z otoczenia, nie z pliku.
+
+ADR-045: jawna lista `data.quality.accepted_outages` (godzina + powód +
+dowód + data), `passes_gate_0()` nie blokuje na pozycjach z listy, raport
+je nadal drukuje ze śladem akceptacji. Detektor NIE jest osłabiany — żadnej
+ogólnej reguły „pusto przy weekendzie jest OK", bo ukryłaby awarię
+w poniedziałkowy poranek. **Kod jeszcze nie napisany** — patrz „Co dalej".
 
 **3. Pomiar z `reports/atr_sunday_stub.md` nie powtórzony** na pełnym
 zakresie. Raport jest z 2015-01…2016-04, bary są już z 2015–2021. Mechanizm
@@ -121,10 +130,12 @@ jest strukturalny, więc to weryfikacja, nie niepewność.
 
 ## Co dalej — kolejność
 
-**1. ADR o 3 godzinach bez danych** (2016-09-02 18:00, 2017-12-24 22:00,
-2019-05-26 22:00): kryterium ręcznej akceptacji + ślad w raporcie jakości,
-potem kod, potem domknięcie bramki 0 (werdykt w `docs/DECISIONS.md`).
-Najpierw ADR, potem kod — jak przy ADR-025 i ADR-044.
+**1. Kod do ADR-045** (ADR jest napisany, kodu nie ma): `data.quality.accepted_outages`
+w configu z trzema pozycjami, parametr listy akceptacji w `passes_gate_0()`,
+sekcja „Zaakceptowane ręcznie" w raporcie jakości. Test musi faktycznie łapać
+błąd — sprawdzić, że godzina NIEUJĘTA na liście nadal blokuje (zepsuć kod
+i zobaczyć, czy test upada). Potem przeliczyć bramkę 0 (`kind="control"`,
+nie podnosi N) i zapisać werdykt.
 
 **2. Powtórzenie pomiaru niedzielnych kikutów** na 2015–2021.
 
