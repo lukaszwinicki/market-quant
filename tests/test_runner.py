@@ -18,8 +18,8 @@ from src.labels.triple_barrier import LabelSpec
 from src.strategy.runner import (
     BENCHMARK_NARROWED, BENCHMARK_NOTE, Controls, Variant, Window, control_pool,
     daily_matrix, decision_summary, evaluators, feature_sets, plateau_check,
-    preflight, render, run_variant, shifted_baseline, split_expectancies,
-    subperiod_expectancies,
+    preflight, random_control_check, render, run_variant, shifted_baseline,
+    split_expectancies, subperiod_expectancies,
 )
 from src.strategy.v1a import Rules, V1aParams
 from src.validation.cpcv import CPCVSpec
@@ -304,6 +304,69 @@ def test_control_pool_always_contains_the_strategy_trades(evaluate, rates):
     assert int(selected.sum()) == v.trades.height
 
 
+# --- kontrola #1 jako warunek bramki 2 (ADR-048) ------------------------------
+#
+# Rozkład zerowy budujemy wprost, zamiast liczyć go przebiegiem: p ma tu być
+# znane z góry. `empirical_p_value` = (1 + ile ≥ obserwacji) / (1 + n), więc
+# przy 200 powtórzeniach p = 0,0299 to dokładnie 5 powtórzeń nad wynikiem.
+
+def _controls_with_p(p: float, n: int = 200) -> Controls:
+    """Rozkład zerowy o n powtórzeniach, ustawiony tak, żeby dać zadane p."""
+    c = Controls()
+    c.random_null = np.zeros(n)
+    c.random_p = p
+    return c
+
+
+def test_random_control_check_passes_below_the_threshold():
+    chk = random_control_check(_controls_with_p(0.0299), 0.05)
+    assert chk.passed
+    assert "0.0299" in chk.detail and "200" in chk.detail
+
+
+def test_random_control_check_fails_at_and_above_the_threshold():
+    """Próg jest ostry: p = 0,05 NIE przechodzi (config mówi „p < 0.05")."""
+    assert not random_control_check(_controls_with_p(0.05), 0.05).passed
+    assert not random_control_check(_controls_with_p(0.0547), 0.05).passed
+
+
+def test_random_control_check_fails_when_the_control_was_not_computed():
+    """Brak liczby to NIE jest zaliczona kontrola — jak #4 i #5 (ADR-036 pkt 1)."""
+    chk = random_control_check(Controls(), 0.05)
+    assert not chk.passed
+    assert "NIE POLICZONA" in chk.detail
+    # Komunikat ma mówić, czego zabrakło, a nie pokazywać `nan`.
+    assert "nan" not in chk.detail
+
+
+def test_random_control_check_names_too_few_reps_instead_of_blaming_the_signal():
+    """Przy 10 powtórzeniach najniższe możliwe p to 1/11 — próg 0,05 jest
+    nieosiągalny NIEZALEŻNIE od strategii. Bramka nie ma padać z tego powodu
+    pod pozorem słabego sygnału."""
+    chk = random_control_check(_controls_with_p(1 / 11, n=10), 0.05)
+    assert not chk.passed
+    assert "poza rozdzielczością" in chk.detail
+    # 20 powtórzeń to najmniejsze n, przy którym próg da się w ogóle osiągnąć.
+    assert random_control_check(_controls_with_p(1 / 21, n=20), 0.05).passed
+
+
+def test_gate_2_threshold_in_the_real_config_matches_the_sentence_it_replaces():
+    """Liczba maszynowa i zdanie prozą w `gates.gate_2` to dwa zapisy tej samej
+    decyzji (ADR-048) i mogą się rozjechać. Ten test trzyma je razem — czyta
+    PRAWDZIWY plik konfiguracji, nie atrapę."""
+    import re
+
+    import yaml
+
+    from src.harness.registry import ROOT
+
+    gate_2 = yaml.safe_load((ROOT / "config" / "v1_baseline.yaml")
+                            .read_text(encoding="utf-8"))["gates"]["gate_2"]
+    prose = re.search(r"p\s*<\s*([0-9.]+)", gate_2["also_requires"])
+    assert prose, gate_2["also_requires"]
+    assert gate_2["random_control_p_max"] == float(prose.group(1)) == 0.05
+
+
 # --- preflight ----------------------------------------------------------------
 
 def _calendar(year: int, currencies=("EUR", "USD")) -> pl.DataFrame:
@@ -461,11 +524,12 @@ def test_full_grid_runs_end_to_end_and_renders_a_report(e2e):
         "costs": {"sensitivity_multipliers": [1.0, 2.0, 3.0],
                   "financing": {"cohort_a_markup_annual_pct": 0.5,
                                 "cohort_a_markup_sensitivity": [0.5, 1.0, 2.0]}},
+        "gates": {"gate_2": {"random_control_p_max": 0.05}},
     }
     result = assess(variants, cfg, window, n_trials=7, controls=controls,
                     block_days=5, boot_reps=200, seed=1, cpcv=CPCVSpec(6, 2, 0, 0))
 
-    assert len(result.checks) == 11
+    assert len(result.checks) == 12
     # Bez policzonego koszyka kontrola #5 MUSI wypaść na czerwono — brak
     # liczby nie może być domyślnym „przeszło" (ADR-036 pkt 1).
     # Tak samo kontrola #4 (ADR-044).
@@ -532,6 +596,7 @@ def test_report_swaps_the_note_when_the_benchmark_is_computed(e2e):
         "costs": {"sensitivity_multipliers": [1.0, 2.0, 3.0],
                   "financing": {"cohort_a_markup_annual_pct": 0.5,
                                 "cohort_a_markup_sensitivity": [0.5, 1.0, 2.0]}},
+        "gates": {"gate_2": {"random_control_p_max": 0.05}},
     }
     result = assess(variants, cfg, window, n_trials=7, controls=Controls(),
                     block_days=5, boot_reps=200, seed=1, cpcv=CPCVSpec(6, 2, 0, 0),

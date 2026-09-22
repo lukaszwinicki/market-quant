@@ -669,6 +669,10 @@ gates:
     name: "baseline — BRAMKA GŁÓWNA"
     requires_all: "validation.acceptance_thresholds"
     also_requires: "istotna przewaga nad kontrolą losową (p < 0.05)"
+    # ADR-048: maszynowa postać zdania wyżej. Wartość nie jest nowa —
+    # `also_requires` niósł ją od początku, tyle że prozą, której assess()
+    # nie umiał odczytać, więc warunek nie wchodził do werdyktu.
+    random_control_p_max: 0.05
     on_failure: >
       Warstwa techniczna nie ma edge'u na tych danych i w tym stylu.
       NIE dodajemy macro. NIE dodajemy ML. NIE dodajemy reżimów.

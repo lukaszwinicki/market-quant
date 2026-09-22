@@ -1095,6 +1095,41 @@ Bramka 0 tego nie złapała, bo `gate0.py` w ogóle nie liczy finansowania. `run
 
 ---
 
+## ADR-048 — Kontrola #1 jako warunek bramki 2: próg p < 0,05 w postaci maszynowej
+
+**Status:** ACCEPTED · 2026-09-22 · **Zmienia sekcję `frozen: true`** (`gates`) · **Doprecyzowuje:** §15 „Gate 2", §10.2 #1 · **Dotyczy:** ADR-036 pkt 1, ADR-046 pkt 4
+
+**Unieważnia `frozen_sha256` = `b77d0b69fa8d2d3d22a225915db6e66710d1da24a6420c90d0ed5092f4b55ec4`. Nowa pieczęć: `79ca85dfd80a6e955141aa2d0107b966aec1b31dbbf2a53b0a1f71466a257e43`.**
+
+**Kontekst:** §15 stawia bramce 2 dwa wymagania: wszystkie progi z §10.3 **oraz** „istotną przewagę nad kontrolą losową". `assess()` w `strategy/runner.py` sprawdzał wyłącznie pierwsze z nich. Kontrola #1 była liczona i jej p-wartość trafiała do raportu oraz do `trials.jsonl` jako liczba, ale **nie była `Check`iem** i nie wchodziła do `result.passed`. Pole w rejestrze nazywa się z tego powodu uczciwie `passed_computed_criteria`, a nie `passed_gate_2`.
+
+Próg istniał — w `gates.gate_2.also_requires`: „istotna przewaga nad kontrolą losową (p < 0.05)". Blok `gates` ma `frozen: true`, więc liczba **była objęta pieczęcią od początku projektu**, tylko zapisana prozą, której kod nie umiał odczytać. Nie jest to więc nowy próg, lecz próg dotąd niewykonalny maszynowo.
+
+**Decyzja:**
+
+1. `gates.gate_2` dostaje pole `random_control_p_max: 0.05` — maszynową postać zdania, które już tam stoi. Wartość się **nie zmienia**.
+2. `assess()` dokłada dwunasty `Check`: `random_control_check(controls, p_max)`. Warunek jest ostry (`p < 0,05`), zgodnie z brzmieniem `also_requires`.
+3. Nie policzony rozkład zerowy to **nie** jest zaliczona kontrola — `Check` wypada na czerwono z komunikatem nazywającym brak, nie z `nan` (ADR-036 pkt 1, tak jak kontrole #4 i #5).
+4. Rozkład zerowy zbyt mały, żeby próg dało się osiągnąć, jest odrębnym trybem awarii i ma własny komunikat. Przy n powtórzeniach najniższe możliwe p to `1/(n+1)`, więc dla n < 20 warunek „p < 0,05" jest niespełnialny niezależnie od strategii. Domyślne `--control-reps 200` daje zapas dziewięciu powtórzeń.
+
+**Uzasadnienie:**
+
+- **Wolno to dodać teraz, bo warunek może bramkę tylko utrudnić.** Dokładamy kryterium, nie zdejmujemy go, i robimy to przed zobaczeniem p. Po przebiegu ta sama zmiana byłaby decyzją pod wynik, nawet gdyby liczba została ta sama.
+- **0,05 nie jest wybrane dzisiaj.** Stoi w zamrożonym bloku `gates` od prerejestracji i jest objęte hashem. Zaostrzenie do 0,01 kusi („ciężar dowodu po stronie H₁"), ale byłoby zmianą liczby prerejestrowanej — a więc dokładnie tym, czego reszta projektu zabrania.
+- **0,01 jest dodatkowo poza rozdzielczością pomiaru.** Przy 200 powtórzeniach najniższe osiągalne p to 0,00498, a próg 0,01 przepuszcza tylko `0` albo `1` powtórzenie nad wynikiem strategii. O werdykcie bramki głównej decydowałaby wtedy różnica między jednym a dwoma szczęśliwymi losowaniami, czyli ziarno, a nie strategia. Próg 0,05 dopuszcza 9 z 200 i jest na to odporny.
+- **Spójność z resztą bramki.** `t ≥ 2,0` i `DSR ≥ 0,95` to ta sama ostrość. Surowość bramki 2 bierze się z koniunkcji dwunastu warunków, nie z zaostrzania jednego z nich.
+- **Próg mieszka w `gates`, nie w `acceptance_thresholds`.** To jedyny warunek bramki 2 spoza tabeli §10.3 — pochodzi wprost z kill criteria. Przeniesienie go do `acceptance_thresholds` dla wygody kodu zatarłoby to rozróżnienie.
+
+**Odrzucone:**
+
+- *Zostawić próg samą prozą i wpisać 0,05 jako stałą w kodzie* (jak `PLATEAU_MIN_SHARE`). Nie rusza pieczęci i oszczędza przemierzenie bramek 0 i 1, ale liczba wiążąca i liczba czytana przez kod leżą wtedy w dwóch miejscach, które mogą się rozjechać bez śladu w hashu.
+- *Zapisać próg poza sekcją `frozen: true`.* Najtańsze i najgorsze: liczba rozstrzygająca o werdykcie bramki, która ma zakończyć projekt, dałaby się zmienić po zobaczeniu wyniku, a żaden hash by tego nie wykrył.
+- *Liczyć p wobec rozkładu zerowego z bramki 1.* Odrzucone już w ADR-046 pkt 4: rozrzut średnich skaluje się jak `1/√(liczba transakcji)`, a §10.2 #1 żąda kontroli o liczebności strategii. Tę liczy `run_v1a` u siebie.
+
+**Konsekwencje:** bramka 2 ma 12 kryteriów zamiast 11. Pieczęć się zmienia, więc przebiegi bramek 0 i 1 wykonane na `b77d0b69…` przestają być aktualne i zostają powtórzone; oba są `kind="control"`, więc **nie kosztują ani jednej próby z limitu 50 ani N w DSR**. Dochodzi `random_control_check()` i pięć testów, w tym jeden czytający prawdziwy plik konfiguracji i pilnujący, żeby liczba maszynowa nie rozjechała się ze zdaniem obok. Werdykt bramki 2 nadal jest niepełny wobec §10.2: kontrola nr 10 (rozkład zerowy per kohorta) czeka na kohortę B.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |

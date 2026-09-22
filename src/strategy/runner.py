@@ -486,6 +486,7 @@ def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
               subs_positive >= th["min_subperiods_positive"],
               " · ".join(f"{lab}: {m:+.4f}" for lab, _, m in subs)),
         plateau_check(variants),
+        random_control_check(controls, cfg["gates"]["gate_2"]["random_control_p_max"]),
         benchmark_check(benchmark),
         control4_check(control4),
     ]
@@ -497,6 +498,36 @@ def assess(variants: list[Variant], cfg: dict, window: Window, n_trials: int,
         per_symbol=per_symbol, overlap=overlap_fraction(trades), effective_n=eff_n,
         controls=controls, benchmark=benchmark, control4=control4, checks=checks,
     )
+
+
+def random_control_check(c: Controls, p_max: float) -> Check:
+    """Kontrola #1 (ADR-048): §15 żąda przewagi ISTOTNEJ, nie tylko dodatniej.
+
+    Jedyny warunek bramki 2 spoza §10.3, więc i próg leży gdzie indziej:
+    w `gates.gate_2`, bo pochodzi wprost z kill criteria, a nie z tabeli
+    metryk. Jak przy kontrolach #4 i #5, brak liczby zostaje brakiem
+    (ADR-036 pkt 1) — `nan < p_max` jest fałszem, ale komunikat ma mówić,
+    czego zabrakło, a nie pokazywać `nan`.
+
+    Osobno łapiemy przypadek, w którym rozkład zerowy jest za mały, żeby
+    próg dało się w ogóle osiągnąć: przy n powtórzeniach najniższe możliwe
+    p to 1/(n+1), więc dla n < 20 warunek „p < 0,05" jest nie do spełnienia
+    NIEZALEŻNIE od strategii. Bez tego rozgałęzienia bramka padałaby
+    z powodu liczby powtórzeń, raportując to jako słabość sygnału.
+    """
+    name = f"kontrola #1: p < {p_max:g} wobec losowych wejść (ADR-048)"
+    if not c.random_null.size:
+        return Check(name, False,
+                     "NIE POLICZONA — werdykt bramki 2 jest niepełny (ADR-048)")
+    finest = 1.0 / (1 + c.random_null.size)
+    if finest >= p_max:
+        return Check(name, False,
+                     f"{c.random_null.size} powtórzeń daje najniższe osiągalne "
+                     f"p = {finest:.4f} — próg {p_max:g} jest poza rozdzielczością "
+                     f"pomiaru, nie mierzy strategii")
+    return Check(name, c.random_p < p_max,
+                 f"p = {c.random_p:.4f} z {c.random_null.size} powtórzeń "
+                 f"(najniższe osiągalne {finest:.4f})")
 
 
 def benchmark_check(b: Benchmark) -> Check:
