@@ -30,10 +30,15 @@ przedziałem. t = −1,62 · DSR = 0,174 (N = 8) · PBO = 0,612 · 1 z 6 par
 dodatnia · 0 z 3 podokresów dodatnich · ujemne przy koszcie 1×, 2× i 3×
 · koszyk §12 i carry-only niepobite.
 
-**Kontrola #1 rozstrzyga sprawę:** p = **0,8010** przy progu 0,05 (ADR-048).
-Mediana losowych wejść **−0,0288** wobec strategii **−0,0560** — losowy wybór
-momentu tracił **dwa razy mniej**. 80% z 200 losowych przebiegów wypadło tak
-samo dobrze albo lepiej. Kontrola #2 to potwierdza: p = 0,8109.
+**Kontrola #1 rozstrzyga sprawę:** p = **0,8010** przy progu 0,05 (ADR-048),
+czyli **160 z 200** losowych powtórzeń wypadło nie gorzej niż V1a. Strategia
+leży na **20. percentylu rozkładu losowego** — mediana losowych −0,0288 wobec
+−0,0560. Czytać to należy jako **nieodróżnialność od losowania po słabszej
+stronie**, a NIE jako „istotnie gorsza od losowania": odstęp od mediany mieści
+się w rozrzucie rozkładu, 40 powtórzeń wypadło gorzej od strategii.
+Kontrola #2 mówi to samo o wyborze momentów: p = 0,8109.
+
+Treść wyniku: sygnał nie szkodzi — on po prostu **nie niesie informacji**.
 
 Ujemne są **wszystkie siedem wariantów** siatki (−0,0303 … −0,0560), więc nie
 ma czego stroić, i **wszystkie trzy podokresy**, więc nie chodzi o epokę.
@@ -52,6 +57,15 @@ NIE dodajemy macro, ML ani reżimów, NIE stroimy parametrów. Hold-out
 Wynikowi można wierzyć, bo bramka 0 wykazała, że aparatura mierzy uczciwie,
 a bramka 1 — że losowe wejścia tracą tyle, ile kosztują. Gdyby przewaga
 istniała, ten sam przyrząd by ją pokazał.
+
+**Granica tego wniosku — do zapamiętania przy ewentualnej nowej hipotezie.**
+Połowa CI expectancy to 0,067 R, więc pomiar był zbudowany na wykrycie
+przewagi rzędu wymaganych +0,10 R (próg leży 2,3 połowy-CI od wyniku).
+Przewaga rzeczywista rzędu +0,02…0,03 R **byłaby w tych danych niewidoczna**.
+Uczciwe zdanie brzmi „nie ma przewagi tej wielkości, jakiej wymagaliśmy",
+a nie „nie ma żadnej". Przy koszcie 0,0116 R na transakcję i **172
+niezależnych obserwacjach** z 889 transakcji (nakładanie 96%) przewaga zbyt
+mała, by ją tu wykryć, byłaby i tak zbyt mała, by się nią handlowało.
 
 ---
 
