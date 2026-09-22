@@ -18,21 +18,29 @@ szybciej niż dysk.
 
 ## Stan (2026-09-22) — bramki 0 i 1 ZAMKNIĘTE, obie PRZECHODZĄ
 
-**Kod:** 551 testów. Inwentarz w archiwum. Brakuje: kontrola §10.2 nr 10,
+**PIECZĘĆ ZMIENIONA: `frozen_sha256` = `79ca85df…`** (ADR-048, unieważniła
+`b77d0b69…`). Bramki 0 i 1 przemierzone pod nową pieczęcią — patrz niżej.
+Przebieg z niezgodnym hashem jest nieważny.
+
+**Kod:** 556 testów. Inwentarz w archiwum. Brakuje: kontrola §10.2 nr 10,
 skrypty bramek **3–5**, kohorta B, `#9` dla kohorty B.
 
 **Bramka 2 NIE potrzebuje osobnego skryptu** — jej werdykt liczy sam
 `run_v1a.py` przez `assess()` w `strategy/runner.py`: wszystkie osiem progów
-z §10.3 plus kontrole #4 i #5 jako `Check`i, raport `v1a.md`, kod wyjścia
+z §10.3 plus kontrole #1, #4 i #5 jako `Check`i, raport `v1a.md`, kod wyjścia
 0/1. Wcześniejsza notatka „brakuje skryptów bramek 2–5" myliła.
 
-**Ale werdykt jest NIEPEŁNY wobec §15** i pole w rejestrze nazywa się
-uczciwie `passed_computed_criteria`, nie `passed_gate_2`. §15 wymaga, żeby
-V1a „biło istotnie kontrolę losową"; kontrole §10.2 (w tym #1) trafiają do
-raportu jako p-wartości, ale **żadna z nich nie jest `Check`iem** i nie
-wchodzi do `passed`. Progu dla p kontroli #1 nie ma ani w konfiguracji,
-ani w żadnym ADR. Do rozstrzygnięcia PRZED przebiegiem V1a — po zobaczeniu
-p byłaby to decyzja podjęta pod wpływem wyniku.
+**Kontrola #1 jest już warunkiem werdyktu (ADR-048, 2026-09-22).** §15 żąda,
+żeby V1a „biło istotnie kontrolę losową", a `assess()` tego nie sprawdzał:
+p kontroli #1 trafiało do raportu jako liczba, ale nie było `Check`iem.
+Próg **istniał** — w `gates.gate_2.also_requires`, prozą („p < 0.05"), pod
+pieczęcią od prerejestracji, tylko w formie nieczytelnej dla kodu. ADR-048
+dokłada `gates.gate_2.random_control_p_max: 0.05` i dwunasty `Check`.
+Wartość się nie zmieniła. Rozstrzygnięte PRZED przebiegiem V1a.
+
+**Werdykt nadal jest NIEPEŁNY wobec §10.2** i pole w rejestrze nazywa się
+uczciwie `passed_computed_criteria`, nie `passed_gate_2`: kontrola nr 10
+(rozkład zerowy per kohorta) czeka na kohortę B.
 
 **Dane.** Bary H1 i M1 zbudowane dla **2015–2021**, sześć par kohorty A
 (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY). Partycje 2022+ świadomie
@@ -70,16 +78,23 @@ przebudowy barów: `build_bars.py --report-only`.
 
 ## Bramka 0 — ZAMKNIĘTA, PRZECHODZI (2026-09-21)
 
-Werdykt: run **`20260921T161726Z-1e142d`**, `gate0.py --end 2021-12-31`,
-2015-01-01 → 2021-12-31, bez `--allow-stale-bars`, ziarno 0, 20 × 100 wejść
-na (para, kierunek). Raport `runs/20260921T161726Z-1e142d/gate0.md`.
-**Drzewo czyste, `git_commit` = `4df53af`**, `frozen_sha256` = `b77d0b69…`.
-Wpis w `trials.jsonl` jako `kind="control"` — N w DSR nadal 1.
+Werdykt obowiązujący: run **`20260922T192347Z-2125e5`**, `gate0.py --end
+2021-12-31`, 2015-01-01 → 2021-12-31, bez `--allow-stale-bars`, ziarno 0,
+20 × 100 wejść na (para, kierunek). Raport
+`runs/20260922T192347Z-2125e5/gate0.md`. **Drzewo czyste, `git_commit` =
+`797bd07`**, `frozen_sha256` = `79ca85df…`. Wpis w `trials.jsonl` jako
+`kind="control"` — N w DSR nadal 1.
 
-Wszystkie kryteria ADR-025 przeszły. Expectancy netto **−0,0110 R**
-[−0,0294; +0,0076], średni koszt **0,01156 R**, ujemne przy koszcie 1×, 2×
-i 3×. Treść bramki 0: aparatura mierzy uczciwie, symulator nie pokazuje
-wycieku z przyszłości.
+Przemierzone po ADR-048, bo zmiana pieczęci unieważniła poprzedni przebieg
+`20260921T161726Z-1e142d` (hash `b77d0b69…`, commit `4df53af`). Werdykt się
+nie zmienił. Liczby drgnęły w czwartym miejscu (netto było −0,0110 R) —
+poprzedni przebieg szedł na barach USDCAD sprzed przebudowy z 2026-09-22,
+nie na innym kodzie. ADR-048 nie dotyka niczego, co liczy bramka 0.
+
+Wszystkie kryteria ADR-025 przeszły. Expectancy netto **−0,0106 R**
+[−0,0289; +0,0081], przed kosztem **+0,0010 R** [−0,0174; +0,0195], średni
+koszt **0,0116 R**, ujemne przy koszcie 1×, 2× i 3×. Treść bramki 0:
+aparatura mierzy uczciwie, symulator nie pokazuje wycieku z przyszłości.
 
 Szczegóły kryteriów, wcześniejsze przebiegi, rozbicie kosztu po latach
 i dwie kwestie rozstrzygnięte przy zamykaniu bramki (237 transakcji „bez
@@ -99,11 +114,16 @@ na ADR-041. Cały pomiar: `docs/PROGRESS_ARCHIVE.md`.
 
 ## Bramka 1 — ZAMKNIĘTA, PRZECHODZI (2026-09-22)
 
-Werdykt: run **`20260922T182800Z-8f81f4`**, `scripts/gate1.py --reps 200
---n-per-side 100`, 2015-01-01 → 2021-12-31, sześć par, ziarno 0.
-Raport `runs/20260922T182800Z-8f81f4/gate1.md`. **Drzewo czyste,
-`git_commit` = `1609183`**, `frozen_sha256` = `b77d0b69…`, `kind="control"` —
+Werdykt obowiązujący: run **`20260922T193136Z-1d27da`**, `scripts/gate1.py
+--reps 200 --n-per-side 100`, 2015-01-01 → 2021-12-31, sześć par, ziarno 0.
+Raport `runs/20260922T193136Z-1d27da/gate1.md`. **Drzewo czyste,
+`git_commit` = `797bd07`**, `frozen_sha256` = `79ca85df…`, `kind="control"` —
 **N w DSR nadal 1**.
+
+Przemierzone po ADR-048 (pieczęć unieważniła run `20260922T182800Z-8f81f4`
+na hashu `b77d0b69…`). Liczby wyszły **identyczne co do czwartego miejsca** —
+to samo ziarno, te same dane, a ADR-048 nie zmienia żadnej wartości, którą
+bramka 1 liczy.
 
 Wszystkie trzy warunki ADR-046 przeszły, i to nie na styk: expectancy netto
 **−0,0261 R**, CI95 **[−0,0402; −0,0122]** — **całe CI leży pod zerem**, więc
@@ -165,11 +185,14 @@ W `trials.jsonl` został wpis przerwanego przebiegu `20260922T180657Z-3acbf1`
 
 ## Co dalej — kolejność
 
-**1. `scripts/run_v1a.py` BEZ `--dry-run`** — odblokowane, bramki 0 i 1
-zamknięte. **To PRAWDZIWA próba**: dokłada 7 do N w DSR i do limitu 50 prób,
+**1. `scripts/run_v1a.py` BEZ `--dry-run`** — odblokowane: bramki 0 i 1
+zamknięte pod pieczęcią `79ca85df…`, a próg kontroli #1 jest rozstrzygnięty
+(ADR-048). **To PRAWDZIWA próba**: dokłada 7 do N w DSR i do limitu 50 prób,
 nieodwracalnie. Uruchamiać raz i tylko za wyraźną zgodą użytkownika.
 Czas przebiegu jest już zmierzony (~15 min, niżej), więc nie ma po co robić
-kolejnego dry runu.
+kolejnego dry runu. Przed startem sprawdzić, że drzewo jest czyste —
+`git_dirty` unieważnia przebieg, a wpis `kind="strategy"` liczy się do N
+także wtedy, gdy przebieg kończy się błędem (ADR-029 pkt 3).
 
 **2. Zostaje** kontrola §10.2 nr 10 (rozkład zerowy per kohorta — w dużej
 części czeka na kohortę B), `#9` dla kohorty B i skrypty bramek 2–5.

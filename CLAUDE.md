@@ -61,8 +61,8 @@ w Deflated Sharpe Ratio i do limitu 50 prób (`max_trials_before_gate_2`),
 nieodwracalnie. Uruchamiać wyłącznie po zamknięciu bramki 0 i za wyraźną
 zgodą użytkownika. Do sprawdzania okablowania służy `--dry-run KATALOG`.
 
-**Aktualna pieczęć: `frozen_sha256` = `b77d0b69…`** (ADR-041, unieważniła
-`2eab678f…`). Niezgodność hasha w przebiegu = wynik jest nieważny.
+**Aktualna pieczęć: `frozen_sha256` = `79ca85df…`** (ADR-048, unieważniła
+`b77d0b69…`). Niezgodność hasha w przebiegu = wynik jest nieważny.
 
 Pełna checklista leakage'u: `PROJECT_SPEC.md` §10.4 i `.claude/rules/leakage.md`.
 
