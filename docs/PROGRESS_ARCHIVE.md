@@ -590,3 +590,33 @@ regresja. Na dokładnie tym samym oknie co pierwszy przebieg
 **−14,5%** i zgodnie z `reports/atr_sunday_stub.md`. Reszta to późniejsze
 lata, gdzie spread jest większy w stosunku do zmienności: 2015 0,00909 →
 2019 **0,01503** → 2021 0,01311.
+
+---
+
+### Powtórzenie pomiaru niedzielnych kikutów (przeniesione 2026-09-22)
+
+`reports/atr_sunday_stub.md` §9, pełny segment RESEARCH, sześć par. **Pomiar,
+nie próba.** ADR-041 potwierdzone na 7 latach (deflacja ATR14 −10,3…−11,9%,
+zawyżenie `cost_r` +16,0%); **żadna liczba nie ruszyła decyzji ani pieczęci**.
+
+Jedno doprecyzowanie operacyjne, które nadal obowiązuje: margines progu
+`min_h1_bars` to **11–20**, nie 9–20 jak podaje ADR-041 („na tej próbie") —
+na 7 latach są trzy Boże Narodzenia po 10 barów. Próg 12 zostaje w środku
+przepaści, nowy ADR niepotrzebny, ale **nie wolno zejść poniżej 11**,
+powołując się na ADR-041.
+
+---
+
+### Pomiar czasu przebiegu V1a — rozbicie (przeniesione 2026-09-22)
+
+Dry run, pełny rok decyzji (2016), prawdziwe kontrole `--control-reps 200
+--pool-per-group 3000`: **3 min 17 s**, 735 MB RAM. Rozkład: 7 wariantów 13 s,
+kontrole #1/#2/#7 + przesunięte cechy **160 s**, koszyk §12 10 s, kontrola #4
+11 s, reszta 3 s. Zmierzona osobno faza wariantów na całym segmencie
+RESEARCH: **67 s** (baseline 889 transakcji).
+
+Ekstrapolacja na pełny przebieg: koszt kontroli #1 rośnie liniowo z liczbą
+transakcji (200 × 142 → 200 × 889 etykietowań), ale **kontrola #2 nie rośnie
+wcale** — `--pool-per-group 3000` tnie ją do 12 × 3000 niezależnie od zakresu.
+Doliczając droższe etykietowanie na 7-letnich ramkach M1 (3,4 ms vs 2,5 ms):
+**ok. 15 minut, z zapasem 10–25.** RAM rzędu 3–4 GB przy 10 GB wolnych.
