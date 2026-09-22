@@ -620,3 +620,64 @@ transakcji (200 × 142 → 200 × 889 etykietowań), ale **kontrola #2 nie rośn
 wcale** — `--pool-per-group 3000` tnie ją do 12 × 3000 niezależnie od zakresu.
 Doliczając droższe etykietowanie na 7-letnich ramkach M1 (3,4 ms vs 2,5 ms):
 **ok. 15 minut, z zapasem 10–25.** RAM rzędu 3–4 GB przy 10 GB wolnych.
+
+---
+
+Przeniesione z `docs/PROGRESS.md` 2026-09-22 po zamknięciu bramki 2.
+Treść bez zmian.
+
+## Niedzielne kikuty — jedno ustalenie, które nadal obowiązuje
+
+Margines progu `min_h1_bars` to **11–20**, nie 9–20 jak podaje ADR-041
+(„na tej próbie") — na 7 latach są trzy Boże Narodzenia po 10 barów. Próg 12
+zostaje w środku przepaści, ale **nie wolno zejść poniżej 11**, powołując się
+na ADR-041. Cały pomiar: `docs/PROGRESS_ARCHIVE.md`.
+
+---
+
+---
+
+## Ile potrwa przebieg V1a — ZMIERZONE (2026-09-21)
+
+**Ok. 15 minut na pełnym segmencie RESEARCH, z zapasem 10–25**, RAM 3–4 GB.
+Zmierzone dry runem na roku 2016 (3 min 17 s) — kontrola #2 nie rośnie
+z zakresem, bo `--pool-per-group 3000` tnie ją do 12 × 3000. Pełne rozbicie
+na fazy: `docs/PROGRESS_ARCHIVE.md`.
+
+**Wniosek: `run_v1a.py` NIE wymaga optymalizacji.** To minuty, nie godziny —
+nie robić kolejnych dry runów „dla pewności".
+
+**Podgląd wyniku — do wiadomości.** Pomiar zaczął się jako dry run na CAŁYM
+segmencie RESEARCH, przerwany po fazie wariantów; zdążył wypisać expectancy
+trzech z siedmiu wariantów (baseline, D−, D+). Asystent te liczby widział,
+użytkownik nie, `trials.jsonl` jest nietknięty i **N w DSR się nie zmienia**:
+dry run nie loguje próby, a podglądnięta została dokładnie ta sama robota,
+którą zaloguje przebieg właściwy (ten sam kod, dane i ziarno) — nie jest to
+osobna próba. **Warunek: nic nie zostaje zmienione w reakcji na te liczby.**
+Zmiana parametru, konfiguracji albo reguły przed przebiegiem właściwym byłaby
+decyzją podjętą pod wpływem wyniku i wymaga ADR, który to nazywa. Liczby są
+do odtworzenia na żądanie — świadomie nie wpisane tutaj.
+
+---
+
+---
+
+## Stopy procentowe — dziura znaleziona i zamknięta (ADR-047, 2026-09-22)
+
+Pierwszy przebieg bramki 1 padł po 200 powtórzeniach: `brak stopy overnight
+dla USD na 2015-01-22`. Szereg z FRED zaczynał się dokładnie tam, gdzie split,
+a `rate_on()` czyta miesiąc wcześniejszy. Pełna diagnoza: **ADR-047**.
+
+Naprawione: dociągnięty 2014 (teraz domyślny zakres `fetch_rates.py`) i nowe
+`require_coverage_for_decisions()` w `gate1.py` oraz w `preflight()` runnera.
+**Żadna wartość 2015–2025 się nie zmieniła** — porównane wiersz po wierszu
+wobec kopii sprzed pobrania: 442 dołożone, zero zmienionych, zero usuniętych.
+
+`run_v1a.py` tej dziury **nie dotykał** (pierwsza decyzja 2016-01-01). Gdyby
+dotykał, byłoby drogo: przebieg `kind="strategy"` liczy się do N także wtedy,
+gdy kończy się błędem (ADR-029).
+
+W `trials.jsonl` został wpis przerwanego przebiegu `20260922T180657Z-3acbf1`
+(`kind="control"`, `status="error"`). Rejestr jest append-only, N to nie rusza.
+
+---

@@ -16,63 +16,74 @@ szybciej niż dysk.
 
 ---
 
+## BRAMKA 2 NIE PRZECHODZI — PROJEKT ZAKOŃCZONY (2026-09-22)
+
+Run **`20260922T200750Z-b57ab5`**, `scripts/run_v1a.py` bez flag, 2016-01-01 →
+2021-12-31, sześć par, 889 transakcji baseline (172 efektywne, nakładanie 96%).
+Raport `runs/20260922T200750Z-b57ab5/v1a.md`. **Drzewo czyste, `git_commit` =
+`4004211`**, `frozen_sha256` = `79ca85df…`, `kind="strategy"`, `n_variants=7`
+— **N w DSR: 1 → 8**, zużyte 8 z 50 prób. Czas 718 s.
+
+**Wszystkie 12 kryteriów na czerwono.** Expectancy netto **−0,0560 R**
+CI95 **[−0,1225; +0,0119]** wobec wymaganych **≥ +0,10 R** — próg leży poza
+przedziałem. t = −1,62 · DSR = 0,174 (N = 8) · PBO = 0,612 · 1 z 6 par
+dodatnia · 0 z 3 podokresów dodatnich · ujemne przy koszcie 1×, 2× i 3×
+· koszyk §12 i carry-only niepobite.
+
+**Kontrola #1 rozstrzyga sprawę:** p = **0,8010** przy progu 0,05 (ADR-048).
+Mediana losowych wejść **−0,0288** wobec strategii **−0,0560** — losowy wybór
+momentu tracił **dwa razy mniej**. 80% z 200 losowych przebiegów wypadło tak
+samo dobrze albo lepiej. Kontrola #2 to potwierdza: p = 0,8109.
+
+Ujemne są **wszystkie siedem wariantów** siatki (−0,0303 … −0,0560), więc nie
+ma czego stroić, i **wszystkie trzy podokresy**, więc nie chodzi o epokę.
+
+**Kontrola #3 zapaliła się nietypowo:** cechy starsze o bar dały −0,0268 R,
+czyli LEPIEJ niż baseline („ROŚNIE — sprawdź off-by-one"). Nie zmienia to
+wniosku. Różnica 0,029 R mieści się w szumie (połowa CI = 0,067 R), a wyciek
+z przyszłości czyni wynik LEPSZYM niż rzeczywistość — nie istnieje scenariusz,
+w którym ta anomalia ukrywa przewagę. Czytanie właściwe: cechy nie niosą
+informacji, więc nie ma znaczenia, z którego bara pochodzi szum.
+
+**Wniosek: H₁ ODRZUCONE, H₀ zostaje w mocy.** Zgodnie z §15 i `CLAUDE.md`:
+NIE dodajemy macro, ML ani reżimów, NIE stroimy parametrów. Hold-out
+2024–2025 zostaje zapieczętowany na stałe. Kohorta B nie jest uruchamiana.
+
+Wynikowi można wierzyć, bo bramka 0 wykazała, że aparatura mierzy uczciwie,
+a bramka 1 — że losowe wejścia tracą tyle, ile kosztują. Gdyby przewaga
+istniała, ten sam przyrząd by ją pokazał.
+
+---
+
 ## Stan (2026-09-22) — bramki 0 i 1 ZAMKNIĘTE, obie PRZECHODZĄ
 
 **PIECZĘĆ ZMIENIONA: `frozen_sha256` = `79ca85df…`** (ADR-048, unieważniła
 `b77d0b69…`). Bramki 0 i 1 przemierzone pod nową pieczęcią — patrz niżej.
 Przebieg z niezgodnym hashem jest nieważny.
 
-**Kod:** 556 testów. Inwentarz w archiwum. Brakuje: kontrola §10.2 nr 10,
-skrypty bramek **3–5**, kohorta B, `#9` dla kohorty B.
+**Kod:** 556 testów, wszystkie przechodzą. Inwentarz w archiwum. Nigdy nie
+powstały: kontrola §10.2 nr 10, kohorta B i skrypty bramek 3–5 — bramka 2
+zakończyła projekt, zanim stały się potrzebne.
 
-**Bramka 2 NIE potrzebuje osobnego skryptu** — jej werdykt liczy sam
-`run_v1a.py` przez `assess()` w `strategy/runner.py`: wszystkie osiem progów
-z §10.3 plus kontrole #1, #4 i #5 jako `Check`i, raport `v1a.md`, kod wyjścia
-0/1. Wcześniejsza notatka „brakuje skryptów bramek 2–5" myliła.
+**Werdykt bramki 2 liczy sam `run_v1a.py`** przez `assess()` w
+`strategy/runner.py`: osiem progów §10.3 plus płaskowyż i kontrole #1, #4,
+#5 jako `Check`i — dwanaście łącznie. Osobny skrypt bramki 2 nie był
+potrzebny. Pole w rejestrze nazywa się `passed_computed_criteria`, nie
+`passed_gate_2`, bo kontrola §10.2 nr 10 wymaga kohorty B i nie została
+policzona. Przy dwunastu kryteriach na czerwono nie zmienia to wniosku.
 
-**Kontrola #1 jest już warunkiem werdyktu (ADR-048, 2026-09-22).** §15 żąda,
-żeby V1a „biło istotnie kontrolę losową", a `assess()` tego nie sprawdzał:
-p kontroli #1 trafiało do raportu jako liczba, ale nie było `Check`iem.
-Próg **istniał** — w `gates.gate_2.also_requires`, prozą („p < 0.05"), pod
-pieczęcią od prerejestracji, tylko w formie nieczytelnej dla kodu. ADR-048
-dokłada `gates.gate_2.random_control_p_max: 0.05` i dwunasty `Check`.
-Wartość się nie zmieniła. Rozstrzygnięte PRZED przebiegiem V1a.
+**Kontrola #1 została wpięta do werdyktu PRZED przebiegiem** (ADR-048).
+Próg istniał wcześniej w `gates.gate_2.also_requires` prozą („p < 0.05"),
+pod pieczęcią od prerejestracji — ADR-048 dołożył tylko jego postać
+maszynową. Wartość się nie zmieniła.
 
-**Werdykt nadal jest NIEPEŁNY wobec §10.2** i pole w rejestrze nazywa się
-uczciwie `passed_computed_criteria`, nie `passed_gate_2`: kontrola nr 10
-(rozkład zerowy per kohorta) czeka na kohortę B.
-
-**Dane.** Bary H1 i M1 zbudowane dla **2015–2021**, sześć par kohorty A
-(EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY). Partycje 2022+ świadomie
-NIE zbudowane — nie są do niczego potrzebne przed bramką 4, a hold-outu
-pilnuje `load_h1`/`load_m1` (`SealedHoldoutError`), nie brak plików.
-
-**Pobieranie ticków ZAKOŃCZONE** (2026-09-22 14:52, 100%, dane do
-2026-09-21). Downloader już nie działa — notatka „leci w tle" jest nieaktualna.
-Front sprawdzać komendą, nie z notatek:
-
-```bash
-for p in EURUSD GBPUSD USDJPY AUDUSD USDCAD EURJPY; do \
-  printf "%-7s " $p; find data/raw/dukascopy/$p -type f | sed "s|.*$p/||" | sort | tail -1; done
-```
-
-Godzin `failed`: **13** po deduplikacji (manifest jest append-only, liczy się
-ostatni status pary godzina+symbol). **Żadna nie leży w RESEARCH ani
-w `validation`** — 3 w hold-oucie, 10 po nim. Segment badawczy jest kompletny
-w 100%. `download_ticks.py --retry-failed` dotyczyłby więc wyłącznie
-zapieczętowanego hold-outu; przed bramką 4 nie ma po co go uruchamiać.
-
-Ostatnia brakująca godzina segmentu badawczego (USDCAD 2021-10-05 02:00)
-dociągnęła się 2026-09-22 rano, więc bary USDCAD 2021 zostały przebudowane
-(6240/6240 godzin cache) — luka tej pary spadła z 6 do 5 barów z 43 634.
-Złapała to blokada `require_fresh_bars()` przy pierwszej próbie bramki 1:
-działa i warto jej ufać.
-
-**Raport jakości** (`reports/data_quality.md`): **PRZECHODZI**. Luki 0,01%
-na parę (3–6 barów z 43 634). Trzy godziny bez ticków u wszystkich sześciu
-par naraz są nadal WYKRYWANE, ale zaakceptowane jawnie wg ADR-045; godzina
-wykryta, a nieujęta na liście, blokuje jak dotąd. Przeliczenie raportu bez
-przebudowy barów: `build_bars.py --report-only`.
+**Dane.** Bary H1 i M1 dla **2015–2021**, sześć par kohorty A, segment
+RESEARCH kompletny w 100%. Pobieranie ticków zakończone 2026-09-22.
+Partycje 2022+ świadomie nie zbudowane; hold-outu pilnuje `load_h1`/`load_m1`
+(`SealedHoldoutError`), nie brak plików. Raport jakości
+(`reports/data_quality.md`): **PRZECHODZI**, luki 0,01% na parę.
+Trzy godziny bez ticków u wszystkich par naraz — wykryte i zaakceptowane
+jawnie wg ADR-045. Szczegóły: `docs/PROGRESS_ARCHIVE.md`.
 
 ---
 
@@ -100,15 +111,6 @@ Szczegóły kryteriów, wcześniejsze przebiegi, rozbicie kosztu po latach
 i dwie kwestie rozstrzygnięte przy zamykaniu bramki (237 transakcji „bez
 wyniku" → warunek `9_friday`; 3 godziny bez danych → ADR-045):
 `docs/PROGRESS_ARCHIVE.md`.
-
----
-
-## Niedzielne kikuty — jedno ustalenie, które nadal obowiązuje
-
-Margines progu `min_h1_bars` to **11–20**, nie 9–20 jak podaje ADR-041
-(„na tej próbie") — na 7 latach są trzy Boże Narodzenia po 10 barów. Próg 12
-zostaje w środku przepaści, ale **nie wolno zejść poniżej 11**, powołując się
-na ADR-041. Cały pomiar: `docs/PROGRESS_ARCHIVE.md`.
 
 ---
 
@@ -140,72 +142,36 @@ jest istotna. Nie ma śladu przewagi tam, gdzie żadnej być nie może.
 
 ---
 
-## Ile potrwa przebieg V1a — ZMIERZONE (2026-09-21)
+## Co dalej — nic
 
-**Ok. 15 minut na pełnym segmencie RESEARCH, z zapasem 10–25**, RAM 3–4 GB.
-Zmierzone dry runem na roku 2016 (3 min 17 s) — kontrola #2 nie rośnie
-z zakresem, bo `--pool-per-group 3000` tnie ją do 12 × 3000. Pełne rozbicie
-na fazy: `docs/PROGRESS_ARCHIVE.md`.
+**Nic.** Bramka 2 nie przeszła, więc projekt jest zakończony — to była
+bramka główna i jej porażka jest odpowiedzią na pytanie, które projekt
+zadawał. Bramki 3, 4 i 5 nie mają się do czego odnosić.
 
-**Wniosek: `run_v1a.py` NIE wymaga optymalizacji.** To minuty, nie godziny —
-nie robić kolejnych dry runów „dla pewności".
+Czego NIE robić, gdyby ktoś wracał do tego repozytorium:
 
-**Podgląd wyniku — do wiadomości.** Pomiar zaczął się jako dry run na CAŁYM
-segmencie RESEARCH, przerwany po fazie wariantów; zdążył wypisać expectancy
-trzech z siedmiu wariantów (baseline, D−, D+). Asystent te liczby widział,
-użytkownik nie, `trials.jsonl` jest nietknięty i **N w DSR się nie zmienia**:
-dry run nie loguje próby, a podglądnięta została dokładnie ta sama robota,
-którą zaloguje przebieg właściwy (ten sam kod, dane i ziarno) — nie jest to
-osobna próba. **Warunek: nic nie zostaje zmienione w reakcji na te liczby.**
-Zmiana parametru, konfiguracji albo reguły przed przebiegiem właściwym byłaby
-decyzją podjętą pod wpływem wyniku i wymaga ADR, który to nazywa. Liczby są
-do odtworzenia na żądanie — świadomie nie wpisane tutaj.
+- **NIE stroić parametrów V1a.** Wszystkie 7 wariantów ujemne — nie ma
+  ustawienia, przy którym reguła zarabia.
+- **NIE dodawać macro, ML ani reżimów.** §15 zabrania tego wprost i to
+  zobowiązanie zostało podpisane przed pierwszym backtestem.
+- **NIE uruchamiać kohorty B** ani §15 „warunku awaryjnego" bez świadomej
+  decyzji człowieka zapisanej jako ADR.
+- **NIE odpieczętowywać hold-outu 2024–2025.** Służył bramce 4, do której
+  projekt nie dotarł. Zostaje nietknięty.
 
----
-
-## Stopy procentowe — dziura znaleziona i zamknięta (ADR-047, 2026-09-22)
-
-Pierwszy przebieg bramki 1 padł po 200 powtórzeniach: `brak stopy overnight
-dla USD na 2015-01-22`. Szereg z FRED zaczynał się dokładnie tam, gdzie split,
-a `rate_on()` czyta miesiąc wcześniejszy. Pełna diagnoza: **ADR-047**.
-
-Naprawione: dociągnięty 2014 (teraz domyślny zakres `fetch_rates.py`) i nowe
-`require_coverage_for_decisions()` w `gate1.py` oraz w `preflight()` runnera.
-**Żadna wartość 2015–2025 się nie zmieniła** — porównane wiersz po wierszu
-wobec kopii sprzed pobrania: 442 dołożone, zero zmienionych, zero usuniętych.
-
-`run_v1a.py` tej dziury **nie dotykał** (pierwsza decyzja 2016-01-01). Gdyby
-dotykał, byłoby drogo: przebieg `kind="strategy"` liczy się do N także wtedy,
-gdy kończy się błędem (ADR-029).
-
-W `trials.jsonl` został wpis przerwanego przebiegu `20260922T180657Z-3acbf1`
-(`kind="control"`, `status="error"`). Rejestr jest append-only, N to nie rusza.
-
----
-
-## Co dalej — kolejność
-
-**1. `scripts/run_v1a.py` BEZ `--dry-run`** — odblokowane: bramki 0 i 1
-zamknięte pod pieczęcią `79ca85df…`, a próg kontroli #1 jest rozstrzygnięty
-(ADR-048). **To PRAWDZIWA próba**: dokłada 7 do N w DSR i do limitu 50 prób,
-nieodwracalnie. Uruchamiać raz i tylko za wyraźną zgodą użytkownika.
-Czas przebiegu jest już zmierzony (~15 min, niżej), więc nie ma po co robić
-kolejnego dry runu. Przed startem sprawdzić, że drzewo jest czyste —
-`git_dirty` unieważnia przebieg, a wpis `kind="strategy"` liczy się do N
-także wtedy, gdy przebieg kończy się błędem (ADR-029 pkt 3).
-
-**2. Zostaje** kontrola §10.2 nr 10 (rozkład zerowy per kohorta — w dużej
-części czeka na kohortę B), `#9` dla kohorty B i skrypty bramek 2–5.
-
-Czego NIE robić: kohorty B (bramka 2 może zakończyć projekt), optymalizacji
-`run_v1a` (zmierzone — jest szybki), uruchamiania V1a bez zgody użytkownika,
-dotykania hold-outu 2024–2025.
+Nowa hipoteza ekonomiczna to nowy projekt, nowa prerejestracja i nowy
+licznik prób — nie kontynuacja tego.
 
 ---
 
 ## Uwaga do `trials.jsonl`
 
+**Końcowe N = 8** z limitu 50: jeden wpis sprzed ADR-029 plus siedem
+wariantów przebiegu bramki 2. Wszystkie przebiegi bramek 0 i 1 to
+`kind="control"` i do N się nie liczą (ADR-029 pkt 4).
+
 Pierwszy wpis (`20260919T134506Z-c4710e`) powstał przed ADR-029 i nie ma pola
-`kind`, więc `n_trials()` liczy go jako próbę strategii (N = 1), choć był
-kontrolą. Zachowawczo — zawyża N, nie zaniża. `scripts/gate0.py` deklaruje
-już `kind="control"`.
+`kind`, więc `n_trials()` liczy go jako próbę strategii, choć był kontrolą.
+Zachowawczo — zawyża N, nie zaniża. Miało to znaczenie dla DSR bramki 2:
+gdyby liczyć uczciwie, N wynosiłoby 7, a poprzeczka SR*₀ byłaby minimalnie
+niższa. Przy DSR = 0,174 wobec progu 0,95 nie zmienia to niczego.
