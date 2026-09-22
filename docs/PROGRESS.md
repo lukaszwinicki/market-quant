@@ -19,7 +19,20 @@ szybciej niż dysk.
 ## Stan (2026-09-22) — bramki 0 i 1 ZAMKNIĘTE, obie PRZECHODZĄ
 
 **Kod:** 551 testów. Inwentarz w archiwum. Brakuje: kontrola §10.2 nr 10,
-skrypty bramek 2–5, kohorta B, `#9` dla kohorty B.
+skrypty bramek **3–5**, kohorta B, `#9` dla kohorty B.
+
+**Bramka 2 NIE potrzebuje osobnego skryptu** — jej werdykt liczy sam
+`run_v1a.py` przez `assess()` w `strategy/runner.py`: wszystkie osiem progów
+z §10.3 plus kontrole #4 i #5 jako `Check`i, raport `v1a.md`, kod wyjścia
+0/1. Wcześniejsza notatka „brakuje skryptów bramek 2–5" myliła.
+
+**Ale werdykt jest NIEPEŁNY wobec §15** i pole w rejestrze nazywa się
+uczciwie `passed_computed_criteria`, nie `passed_gate_2`. §15 wymaga, żeby
+V1a „biło istotnie kontrolę losową"; kontrole §10.2 (w tym #1) trafiają do
+raportu jako p-wartości, ale **żadna z nich nie jest `Check`iem** i nie
+wchodzi do `passed`. Progu dla p kontroli #1 nie ma ani w konfiguracji,
+ani w żadnym ADR. Do rozstrzygnięcia PRZED przebiegiem V1a — po zobaczeniu
+p byłaby to decyzja podjęta pod wpływem wyniku.
 
 **Dane.** Bary H1 i M1 zbudowane dla **2015–2021**, sześć par kohorty A
 (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY). Partycje 2022+ świadomie
