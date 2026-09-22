@@ -115,11 +115,29 @@ ukośnika ignorował kiedyś `src/data/` — czyli kod.
 
 ---
 
-## Stan
+## Stan — PROJEKT ZAMKNIĘTY (2026-09-22)
 
-Bramka 0 w toku (pobieranie ticków w tle). Bieżący stan, ostatnie ADR-y
-z wynikami pomiarów i kolejne kroki: **`docs/PROGRESS.md`** — przeczytać
-na starcie każdej sesji dotyczącej danych, strategii albo walidacji.
-Ten plik (`CLAUDE.md`) trzyma tylko reguły trwałe; nie dopisywać tu
-przebiegu prac ani wyników — to idzie do `PROGRESS.md`, a decyzje
-trwałe do `DECISIONS.md` jako ADR.
+**Bramka 2 nie przeszła. H₁ odrzucone, H₀ zostaje w mocy. ADR-049 jest
+terminalny.** Run `20260922T200750Z-b57ab5`: expectancy netto −0,0560 R
+wobec wymaganych +0,10 R, wszystkie dwanaście kryteriów na czerwono,
+kontrola losowa niepobita (p = 0,80 przy progu 0,05).
+
+To jest wynik, nie porażka — projekt był aparaturą do rozstrzygnięcia jednej
+hipotezy i ją rozstrzygnął.
+
+**Co to znaczy dla każdej kolejnej sesji w tym repozytorium:**
+
+- **Nie stroić parametrów V1a, nie dodawać macro, ML ani reżimów.** §15
+  zabrania tego wprost, a zobowiązanie zostało podpisane przed pierwszym
+  backtestem. Każda taka zmiana byłaby teraz wybrana ze znajomością wyniku.
+- **Nie uruchamiać `run_v1a.py`, kohorty B ani §15 „warunku awaryjnego"**
+  bez świadomej decyzji człowieka zapisanej jako nowy ADR.
+- **Hold-out 2024–2025 zostaje zapieczętowany na stałe.** Służył bramce 4,
+  do której projekt nie dotarł.
+- **Nowa hipoteza ekonomiczna to NOWY projekt** — nowa prerejestracja, nowy
+  licznik prób, nowa pieczęć. Nie kontynuacja tego i nie dopisek tutaj.
+
+Reguły powyżej obowiązują nadal — opisują, dlaczego temu wynikowi można
+wierzyć. Pełny werdykt z granicami wniosku: **`docs/PROGRESS.md`**
+i **ADR-049** w `docs/DECISIONS.md`. Ten plik trzyma tylko reguły trwałe;
+nie dopisywać tu przebiegu prac ani wyników.

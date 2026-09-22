@@ -1130,7 +1130,74 @@ Próg istniał — w `gates.gate_2.also_requires`: „istotna przewaga nad kontr
 
 ---
 
-## Decyzje otwarte (do rozstrzygnięcia empirycznie)
+## ADR-049 — Bramka 2 nie przeszła: H₁ odrzucone, projekt zamknięty
+
+**Status:** ACCEPTED · 2026-09-22 · **TERMINALNY** · **Wykonuje:** §15 „Gate 2", ADR-020 (kill criteria prerejestrowane) · **Zamyka:** O-1
+
+**Kontekst:** Przebieg `20260922T200750Z-b57ab5`, `scripts/run_v1a.py` bez flag, 2016-01-01 → 2021-12-31, sześć par kohorty A, 889 transakcji baseline (172 efektywne, nakładanie 96%), 718 s. Drzewo czyste, `git_commit` = `4004211`, `frozen_sha256` = `79ca85df…`, `kind="strategy"`, `n_variants=7` — N w DSR 1 → 8, zużyte 8 z 50 prób. Raport: `runs/20260922T200750Z-b57ab5/v1a.md`.
+
+**Wszystkie dwanaście kryteriów bramki 2 wypadło na czerwono:**
+
+| Kryterium | Wymagane | Wynik |
+|---|---|---|
+| Expectancy netto | ≥ +0,10 R | **−0,0560 R**, CI95 [−0,1225; +0,0119] |
+| t-stat | ≥ 2,0 | −1,62 |
+| DSR (ADR-027) | ≥ 0,95 | 0,174 przy N = 8 |
+| PBO | ≤ 0,30 | 0,612 |
+| Odporność kosztowa | > 0 przy 2× | −0,0730 (i −0,0899 przy 3×) |
+| Oś marży swapu (ADR-037) | > 0 wszędzie | ujemne na całej osi |
+| Stabilność instrumentów | ≥ 4 z 6 | 1 z 6 |
+| Stabilność czasowa | ≥ 2 z 3 | 0 z 3 |
+| Płaskowyż (ADR-028) | sąsiedzi ≥ 50% baseline | baseline ≤ 0 — nie ma czego potwierdzać |
+| Kontrola #1 (ADR-048) | p < 0,05 | **p = 0,8010** |
+| Kontrola #4 (ADR-044) | carry-only pobity | ΔSharpe −0,0336, CI95 [−0,2128; +0,1267] |
+| Kontrola #5 (ADR-040) | koszyk §12 pobity | ΔSharpe +0,0450, CI95 [−0,0758; +0,1684] |
+
+Rozstrzyga kontrola #1: **160 z 200** losowych powtórzeń wypadło nie gorzej niż V1a, czyli strategia leży na **20. percentylu rozkładu losowego**. Czytać to należy jako nieodróżnialność od losowania po słabszej stronie, a **nie** jako „istotnie gorsza od losowania" — 40 powtórzeń wypadło gorzej, odstęp od mediany mieści się w rozrzucie. Kontrola #2 mówi to samo o wyborze momentów (p = 0,8109). Ujemne są wszystkie siedem wariantów siatki (−0,0303 … −0,0560) i wszystkie trzy podokresy.
+
+**Decyzja:** **H₁ zostaje odrzucone. H₀ — że taka strategia nie istnieje — zostaje w mocy. Projekt jest zamknięty.**
+
+Zgodnie z §15 i `CLAUDE.md`, bez wyjątków: nie dodajemy macro, nie dodajemy ML, nie dodajemy reżimów, nie stroimy parametrów. Hold-out 2024–2025 pozostaje zapieczętowany na stałe — służył bramce 4, do której projekt nie dotarł. Kohorta B nie jest uruchamiana; §15 „warunek awaryjny" nie jest wykorzystywany.
+
+**Uzasadnienie:** Konsekwencja porażki bramki 2 była prerejestrowana przed pierwszym backtestem (ADR-020, §15) i nie podlega negocjacji po fakcie. Ten ADR nie podejmuje nowej decyzji — **wykonuje decyzję już podjętą** i zapisuje moment, w którym stała się wiążąca.
+
+Wynik jest wiarygodny, bo droga do niego była zamknięta osobno: bramka 0 wykazała, że aparatura mierzy uczciwie i nie pokazuje wycieku z przyszłości, bramka 1 — że losowe wejścia tracą mniej więcej tyle, ile kosztują, i że strata jest istotna. Wyjaśnienie „źle zmierzyliśmy" jest niedostępne, i to było celem tamtych bramek. Kontrola #1 została wpięta do werdyktu **przed** przebiegiem (ADR-048), na progu prerejestrowanym prozą od początku projektu.
+
+**Czego ten wynik NIE mówi — granica wniosku:** Połowa CI expectancy to 0,067 R, więc pomiar był zbudowany na wykrycie przewagi rzędu wymaganych +0,10 R (próg leży 2,3 połowy-CI od wyniku). Przewaga rzeczywista rzędu +0,02…0,03 R **byłaby w tych danych niewidoczna**. Uczciwe zdanie brzmi „nie ma przewagi tej wielkości, jakiej wymagaliśmy", a nie „nie ma żadnej przewagi". Przy koszcie 0,0116 R na transakcję i 172 niezależnych obserwacjach z siedmiu lat przewaga zbyt mała, by ją tu wykryć, byłaby i tak zbyt mała, by się nią handlowało — ale to jest argument o użyteczności, nie o istnieniu, i nie wolno go mylić z dowodem nieistnienia.
+
+Wniosek dotyczy **jednej reguły**: wybicia z kanału Donchiana na H1 z barierami skalowanymi ATR-em, na sześciu głównych parach FX, w latach 2016–2021, po realistycznych kosztach — wraz z jej otoczeniem parametrycznym. O innych horyzontach, rynkach i mechanizmach nie mówi nic.
+
+**Anomalia zgłoszona jawnie:** kontrola #3 (cechy starsze o bar) dała −0,0268 R, czyli **lepiej** niż baseline −0,0560 („ROŚNIE — sprawdź off-by-one"). Nie zmienia to wniosku z dwóch powodów. Różnica 0,029 R mieści się w szumie (połowa CI = 0,067 R). Przede wszystkim jednak wyciek z przyszłości czyni wynik **lepszym** niż rzeczywistość — nie istnieje scenariusz, w którym ta anomalia ukrywa przewagę; gdyby wyciek tu był, prawdziwy wynik byłby jeszcze gorszy. Czytanie właściwe: cechy nie niosą informacji, więc nie ma znaczenia, z którego bara pochodzi szum.
+
+**Werdykt jest niepełny wobec §10.2 i pozostanie taki.** Kontrola nr 10 (rozkład zerowy osobno per kohorta) wymaga kohorty B i nie została policzona; pole w rejestrze nazywa się dlatego `passed_computed_criteria`, nie `passed_gate_2`. Przy dwunastu kryteriach na czerwono nie zmienia to wniosku, a policzenie jej dziś wymagałoby uruchomienia kohorty B, czego §15 zabrania po porażce bramki 2.
+
+**Konsekwencje:**
+
+1. `docs/PROGRESS.md` przestaje być logiem bieżącym i staje się zapisem wyniku końcowego.
+2. Bramki 3, 4 i 5 nie mają się do czego odnosić i nie powstaną.
+3. Aparatura zostaje i jest wielokrotnego użytku: dane tickowe, model kosztów, rozstrzyganie barier bez optymistycznego przechyłu, ochrony przed leakage'em, rejestr prób, CPCV/PBO/DSR, 556 testów. To była droga część projektu.
+4. **Nowa hipoteza ekonomiczna to NOWY projekt** — nowa prerejestracja, nowy licznik prób, nowa pieczęć. Nie kontynuacja tego i nie dopisek do tego pliku. Ponowne użycie tych samych siedmiu lat danych obciąża nową hipotezę skumulowanym kosztem wielokrotnego testowania i musi to jawnie uwzględniać.
+
+---
+
+## Decyzje otwarte — ZAMKNIĘTE wraz z projektem (ADR-049)
+
+Tabela zostaje dla zapisu historycznego. **O-1 i O-5 zostały rozstrzygnięte
+empirycznie; pozostałe pozostaną nierozstrzygnięte na zawsze**, bo bramka 2
+zakończyła projekt przed bramkami, które miały je rozstrzygać.
+
+| # | Pytanie | Rozstrzyga | Stan |
+|---|---|---|---|
+| O-1 | Czy edge istnieje? | Gate 2 | **NIE** (ADR-049) |
+| O-5 | Czy jakość darmowych danych wystarcza do wiarygodnej symulacji? | Gate 0 | **TAK** (bramka 0 przeszła) |
+| O-2, O-3, O-4 | carry / blackout / logit | Gate 3 | nierozstrzygnięte — bramki nie było |
+| O-6 | Jakie `r%`? | Po Gate 4 | nierozstrzygnięte |
+| O-9 | Czy edge replikuje się na kohorcie B? | Gate 5 | bezprzedmiotowe — nie ma czego replikować |
+| O-7, O-8, O-10, O-11 | M15 timing / FVG / horyzont B / pooling | V2 | nierozstrzygnięte — V2 nie powstanie |
+
+<details>
+<summary>Pierwotna tabela decyzji otwartych (stan sprzed bramki 2)</summary>
+
 
 | # | Pytanie | Rozstrzyga |
 |---|---|---|
@@ -1145,3 +1212,5 @@ Próg istniał — w `gates.gate_2.also_requires`: „istotna przewaga nad kontr
 | O-9 | Czy edge replikuje się na kohorcie B? | Gate 5 |
 | O-10 | Czy skrócenie horyzontu na kohorcie B do 5 dni opłaca się mimo utraty ruchu? | V2 |
 | O-11 | Czy pooling kohort A + B bije oba modele osobne? | V2 |
+
+</details>
