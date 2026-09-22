@@ -37,7 +37,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.data.rates import require_coverage as require_rate_coverage  # noqa: E402
+from src.data.rates import require_coverage_for_decisions as require_rate_coverage  # noqa: E402
 from src.execution.financing import apply_financing, markup_from  # noqa: E402
 from src.features.technical import compute_features  # noqa: E402
 from src.harness.market import (  # noqa: E402

@@ -128,3 +128,16 @@ def require_coverage(rates: pl.DataFrame, currencies: tuple[str, ...], kind: str
         raise ValueError(
             f"niepełne stopy {kind}: "
             + ", ".join(f"{c} brakuje {n} mies." for c, n in gaps))
+
+
+def require_coverage_for_decisions(rates: pl.DataFrame, currencies: tuple[str, ...],
+                                   kind: str, start: dt.date, end: dt.date) -> None:
+    """To samo, ale dla DNI DECYZJI, nie dla miesięcy serii.
+
+    `rate_on()` czyta miesiąc POPRZEDZAJĄCY dzień decyzji, więc przebieg
+    zaczynający się 1 stycznia potrzebuje grudnia roku wcześniejszego.
+    Sprawdzanie wprost `[start, end]` przepuszczało taki przebieg i wywracało
+    go dopiero w `apply_financing` — czyli PO wpisie w `trials.jsonl`.
+    To jest właściwa kontrola wstępna dla każdego przebiegu liczącego swap.
+    """
+    require_coverage(rates, currencies, kind, _prev_month(start), _prev_month(end))

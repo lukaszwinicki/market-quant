@@ -13,6 +13,7 @@ import pytest
 
 from src.data.rates import (
     SCHEMA, coverage_gaps, differential, rate_on, require_coverage,
+    require_coverage_for_decisions,
 )
 
 
@@ -132,6 +133,51 @@ def test_coverage_spans_a_year_boundary():
             + [("USD", 2021, m, 1.0) for m in range(1, 3)])
     assert coverage_gaps(rates(rows), ("USD",), "overnight",
                          dt.date(2020, 11, 1), dt.date(2021, 2, 28)) == []
+
+
+# --- pokrycie liczone dniami decyzji ----------------------------------------
+#
+# Bramka 1 przeszła kontrolę wstępną, policzyła 200 powtórzeń i dopiero
+# `apply_financing` rzucił „brak stopy overnight dla USD na 2015-01-22".
+# Seria zaczynała się dokładnie tam, gdzie split — a `rate_on()` czyta
+# miesiąc wcześniejszy. Kontrola sprawdzała nie te miesiące, co kod.
+
+def test_series_starting_with_the_split_does_not_cover_the_first_month():
+    rows = [("USD", 2020, m, 1.0) for m in range(1, 13)]
+    with pytest.raises(ValueError, match="USD brakuje 1"):
+        require_coverage_for_decisions(
+            rates(rows), ("USD",), "overnight",
+            dt.date(2020, 1, 1), dt.date(2020, 11, 30))
+
+
+def test_one_extra_month_before_the_split_is_enough():
+    rows = ([("USD", 2019, 12, 1.0)]
+            + [("USD", 2020, m, 1.0) for m in range(1, 12)])
+    require_coverage_for_decisions(
+        rates(rows), ("USD",), "overnight",
+        dt.date(2020, 1, 1), dt.date(2020, 12, 31))
+
+
+def test_the_month_of_the_last_decision_day_is_not_required():
+    """Grudniowa decyzja czyta listopad, więc grudnia w serii być nie musi."""
+    rows = ([("USD", 2019, 12, 1.0)]
+            + [("USD", 2020, m, 1.0) for m in range(1, 12)])
+    require_coverage_for_decisions(
+        rates(rows), ("USD",), "overnight",
+        dt.date(2020, 12, 1), dt.date(2020, 12, 31))
+
+
+def test_the_real_research_split_is_covered_end_to_end():
+    """Gdyby stopy znowu zaczynały się 2015-01, ten test upada."""
+    from pathlib import Path
+
+    from src.data.rates import COHORT_A_CURRENCIES
+    path = Path(__file__).resolve().parents[1] / "data" / "rates" / "fred.parquet"
+    if not path.exists():
+        pytest.skip("brak data/rates/fred.parquet — uruchom scripts/fetch_rates.py")
+    require_coverage_for_decisions(
+        pl.read_parquet(path), COHORT_A_CURRENCIES, "overnight",
+        dt.date(2015, 1, 1), dt.date(2021, 12, 31))
 
 
 # --- pobrany plik, jeśli istnieje -------------------------------------------

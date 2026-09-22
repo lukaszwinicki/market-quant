@@ -58,7 +58,7 @@ import numpy as np
 import polars as pl
 
 from ..data.calendar import require_coverage as require_calendar_coverage
-from ..data.rates import require_coverage as require_rate_coverage
+from ..data.rates import require_coverage_for_decisions as require_rate_coverage
 from ..execution.financing import apply_financing, markup_from, markup_grid_from
 from ..execution.simulator import CostModel
 from ..features.technical import compute_features

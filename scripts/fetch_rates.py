@@ -158,7 +158,10 @@ def render(rates: pl.DataFrame, start: dt.date, end: dt.date) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--years", nargs=2, type=int, default=[2015, 2025],
+    # OD 2014, nie 2015: `rate_on()` czyta miesiąc poprzedzający dzień
+    # decyzji, więc przebieg startujący 2015-01-01 potrzebuje grudnia 2014
+    # (ADR-047). Pobranie od roku splitu zostawia pierwszy miesiąc bez stopy.
+    ap.add_argument("--years", nargs=2, type=int, default=[2014, 2025],
                     metavar=("OD", "DO"))
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()

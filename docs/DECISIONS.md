@@ -1063,6 +1063,38 @@ Bramka 0 zmierzyła na tej samej kontroli (run `20260921T161726Z-1e142d`, 2015�
 
 ---
 
+## ADR-047 — Szereg stóp zaczyna się miesiąc przed splitem; pokrycie sprawdzane dniami decyzji
+
+**Status:** ACCEPTED · 2026-09-22 · **Doprecyzowuje:** ADR-035 i kontrolę wstępną z `strategy/runner.py`
+
+**Kontekst:** Pierwszy przebieg bramki 1 przeszedł kontrolę wstępną, policzył wszystkie 200 powtórzeń (10 minut) i wywrócił się dopiero w `apply_financing`: `brak stopy overnight dla USD na 2015-01-22 (szukano wpisu <= 2014-12-01)`.
+
+Obie strony działały zgodnie ze swoim opisem, tylko mierzyły co innego. `rate_on()` celowo czyta miesiąc POPRZEDZAJĄCY dzień decyzji — seria miesięczna dla stycznia to średnia ze stycznia, znana dopiero po jego końcu, więc użycie jej do styczniowej transakcji byłoby zaglądaniem w przyszłość. Kontrola wstępna `require_coverage()` sprawdzała natomiast miesiące `[start, end]` przebiegu. Szereg z FRED pobrano `--years 2015 2025`, czyli dokładnie od początku splitu badawczego. Styczeń 2015 był więc pokryty jako miesiąc serii i niepokryty jako dzień decyzji.
+
+Bramka 0 tego nie złapała, bo `gate0.py` w ogóle nie liczy finansowania. `run_v1a.py` też nie — jego domyślna pierwsza decyzja to 2016-01-01, a grudzień 2015 w szeregu jest. Dziura była widoczna wyłącznie dla przebiegu startującego w pierwszym miesiącu splitu, czyli praktycznie tylko dla bramki 1.
+
+**Decyzja:**
+
+1. Szereg stóp pobieramy **od roku poprzedzającego split badawczy**. Domyślny zakres `scripts/fetch_rates.py` to `--years 2014 2025`. Dociągnięto 2014 (442 wiersze); **zero wartości z 2015–2025 nie zmieniło się**, zero ubytków — porównane wiersz po wierszu wobec kopii sprzed pobrania.
+2. Kontrola wstępna liczy pokrycie **dniami decyzji, nie miesiącami serii**: `require_coverage_for_decisions()` przesuwa oba końce zakresu o `_prev_month()`. Używają jej `scripts/gate1.py` i `preflight()` w `strategy/runner.py`.
+
+**Uzasadnienie:**
+
+- **Kontrola wstępna ma sprawdzać to, co kod naprawdę przeczyta.** Kontrola, która przepuszcza przebieg wywracający się 10 minut później, nie jest kontrolą wstępną — jest drugim źródłem prawdy o tym samym. Przesunięcie o miesiąc wpisane jest w `rate_on()`, więc musi być wpisane i w to, co sprawdzamy przed `start_run`.
+- **Awaria była głośna, ale mogła być cicha.** Tu wyszedł `KeyError`, bo `rate_on()` traktuje brak stopy jako błąd, nie jako zero — i to jedyny powód, dla którego nie policzyliśmy stycznia 2015 przy zerowym swapie. Gdyby kiedyś ktoś dołożył `fillna(0)`, ta sama dziura przeszłaby przez bramkę bez śladu.
+- **Kolejność ma znaczenie dla licznika prób.** Wszystko, co może unieważnić przebieg, idzie przed `start_run()` (`scripts/gate1.py` §komentarz). Dla `kind="control"` upadek po wpisie kosztuje tylko czas, ale dla `kind="strategy"` wpis liczy się do N w DSR także wtedy, gdy przebieg skończył się błędem (ADR-029 pkt 3). Kontrola wstępna, która puszcza dalej zły przebieg, jest więc wprost kosztem w limicie 50 prób.
+- **Rok wstecz zamiast miesiąca wstecz**, bo granica splitu nie jest jedynym miejscem, gdzie to wyjdzie: tańiej mieć zapas niż powtarzać tę diagnozę przy kohorcie B albo przy zmianie `carry_kind` na serię o innym opóźnieniu.
+
+**Odrzucone:**
+
+- *Zacząć bramkę 1 od 2015-02-01 albo od 2016-01-01.* Zabiera miesiąc (albo rok) z rozkładu zerowego, żeby ominąć brak jednego wiersza w pliku z danymi. Zakres pomiaru dopasowany do luki w danych, a nie do pytania.
+- *Przyjąć zerowy swap tam, gdzie brakuje stopy.* Zero to nie „brak danych", tylko konkretna, fałszywa stopa. Jawnie odrzucone już w `rate_on()`.
+- *Zostawić kontrolę wstępną i tylko dociągnąć 2014.* Naprawia ten jeden przypadek i zostawia rozbieżność między tym, co sprawdzamy, a tym, co czytamy — do następnego odkrycia przy okazji.
+
+**Konsekwencje:** `data/rates/fred.parquet` ma 5270 wierszy zamiast 4828. Dochodzi `require_coverage_for_decisions()` i cztery testy w `tests/test_rates.py`, w tym jeden na prawdziwym pliku z dysku — gdyby szereg znowu zaczynał się 2015-01, test upada. Nic w konfiguracji się nie zmienia, pieczęć `frozen_sha256` = `b77d0b69…` zostaje, N w DSR zostaje 1.
+
+---
+
 ## Decyzje otwarte (do rozstrzygnięcia empirycznie)
 
 | # | Pytanie | Rozstrzyga |
