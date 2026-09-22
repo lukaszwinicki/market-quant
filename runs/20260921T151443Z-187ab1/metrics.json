@@ -1,0 +1,35 @@
+{
+  "event": "end",
+  "run_id": "20260921T151443Z-187ab1",
+  "ts_utc": "2026-09-21T15:16:05.980850+00:00",
+  "status": "ok",
+  "error": null,
+  "duration_s": 81.652,
+  "metrics": {
+    "passed": false,
+    "data_quality_passed": false,
+    "pre_cost_r": 0.0005377530248110004,
+    "pre_cost_ci": [
+      -0.017994829156243012,
+      0.019210459115727076
+    ],
+    "half_ci": 0.018602644135985044,
+    "net_r": -0.011021730568443654,
+    "net_ci": [
+      -0.029388730097099375,
+      0.007608452910913192
+    ],
+    "mean_cost_r": 0.011559483593254651,
+    "resolution": 1.6092971615825742,
+    "n_trades": 23758,
+    "n_unique_trades": 23488,
+    "n_unique_dropped": 237,
+    "n_days": 1801,
+    "checks": {
+      "a. rachunek kosztu per transakcja (podłoga, spread raz)": true,
+      "b. martyngał (syntetyk): E[R] = −koszt przy koszcie 0,5 R": true,
+      "c. losowe wejścia: CI95 przed kosztem ∋ 0, połowa CI ≤ 0.05 R": true,
+      "spread z ticków bid/ask (nie średni, nie mid)": true
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "event": "start",
+  "run_id": "20260919T134506Z-c4710e",
+  "ts_utc": "2026-09-19T13:45:06.012904+00:00",
+  "purpose": "gate0: random-entry negative test on cohort A",
+  "params": {
+    "symbols": [
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "AUDUSD",
+      "USDCAD",
+      "EURJPY"
+    ],
+    "start": "2015-01-01T00:00:00+00:00",
+    "end": "2016-04-28T14:00:00+00:00",
+    "n_per_side": 100,
+    "reps": 20,
+    "seed": 0,
+    "boot_reps": 10000,
+    "block_days": 20,
+    "label_spec": {
+      "sl_multiple": 2.0,
+      "tp_multiple": 4.0,
+      "horizon_business_days": 10
+    }
+  },
+  "git_commit": "e8dd9294bdf62210cbc5a627ae44979afd940da6",
+  "git_dirty": true,
+  "git_diff_sha256": "f06f70c8b0006681d7dcba0f5a9673033e5b1ba3a0e7c38901ebfaa5bcbbd4ef",
+  "git_untracked": [
+    "scripts/gate0.py",
+    "src/validation/gate0.py",
+    "tests/test_gate0.py"
+  ],
+  "config_path": "config/v1_baseline.yaml",
+  "config_sha256": "07d7b033d62c3197964af76cea2f6fb12338f532c546ede4f2980df75fd35554",
+  "config_freeze_commit": "6269ff51472912e3b6720aaba4eed295e894bc1a",
+  "frozen_sha256": "eac58655ffb32bc9f9dc54eea8cfef6602095d4a5818e2fd3e85c8a9dc2e3250",
+  "argv": [
+    "scripts/gate0.py"
+  ],
+  "python": "3.12.3",
+  "packages": {
+    "polars": "1.44.2",
+    "numpy": "2.5.3",
+    "pyarrow": "25.0.1",
+    "PyYAML": "6.0.3"
+  }
+}

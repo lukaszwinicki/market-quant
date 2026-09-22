@@ -10,7 +10,19 @@
 *.gz
 
 # === WYNIKI URUCHOMIEŃ ===
-/runs/
+# Parquety przebiegu (trades, labels, null) bywają dziesiątkami MB i są
+# odtwarzalne z kodu — zostają poza repo.
+#
+# Ale RAPORTY, metryki, kopia zamrożonej konfiguracji i diff brudnego
+# drzewa to ~400 KB i są JEDYNYM dowodem wyniku. Ta sama logika, co przy
+# trials.jsonl niżej: werdykt bez wersjonowanego raportu jest twierdzeniem,
+# nie dowodem. Dotyczy to zwłaszcza bramki 2, która zakończyła projekt.
+/runs/**
+!/runs/**/
+!/runs/**/*.md
+!/runs/**/*.json
+!/runs/**/*.yaml
+!/runs/**/*.patch
 
 # UWAGA: trials.jsonl NIE jest tu wymieniony celowo.
 # Rejestr prób MUSI być wersjonowany — bez historii commitów

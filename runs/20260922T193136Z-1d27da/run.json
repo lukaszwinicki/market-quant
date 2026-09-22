@@ -1,0 +1,54 @@
+{
+  "event": "start",
+  "run_id": "20260922T193136Z-1d27da",
+  "ts_utc": "2026-09-22T19:31:36.694600+00:00",
+  "purpose": "gate1: null distribution from the random control on cohort A",
+  "kind": "control",
+  "n_variants": 1,
+  "params": {
+    "symbols": [
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "AUDUSD",
+      "USDCAD",
+      "EURJPY"
+    ],
+    "start": "2015-01-01T00:00:00+00:00",
+    "end": "2021-12-31T21:00:00+00:00",
+    "n_per_side": 100,
+    "reps": 200,
+    "seed": 0,
+    "boot_reps": 10000,
+    "block_days": 20,
+    "markup_annual_pct": 0.5,
+    "rate_kind": "overnight",
+    "label_spec": {
+      "sl_multiple": 2.0,
+      "tp_multiple": 4.0,
+      "horizon_business_days": 10
+    }
+  },
+  "git_commit": "797bd07fbf255ada7b5253428e8a69f68fa61fbf",
+  "git_dirty": false,
+  "git_diff_sha256": null,
+  "git_untracked": [],
+  "config_path": "config/v1_baseline.yaml",
+  "config_sha256": "970cd65eead9a854f2f6d964cf30e7b7d2482852628e350abd231efb86365bf1",
+  "config_freeze_commit": "6269ff51472912e3b6720aaba4eed295e894bc1a",
+  "frozen_sha256": "79ca85dfd80a6e955141aa2d0107b966aec1b31dbbf2a53b0a1f71466a257e43",
+  "argv": [
+    "scripts/gate1.py",
+    "--reps",
+    "200",
+    "--n-per-side",
+    "100"
+  ],
+  "python": "3.12.3",
+  "packages": {
+    "polars": "1.44.2",
+    "numpy": "2.5.3",
+    "pyarrow": "25.0.1",
+    "PyYAML": "6.0.3"
+  }
+}

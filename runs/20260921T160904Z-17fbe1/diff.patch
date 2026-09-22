@@ -1,0 +1,426 @@
+diff --git a/config/v1_baseline.yaml b/config/v1_baseline.yaml
+index 916bb0f..2be06dc 100644
+--- a/config/v1_baseline.yaml
++++ b/config/v1_baseline.yaml
+@@ -170,6 +170,35 @@ data:
+     gap_report_required: true
+     dst_handling: "jawne, różne daty przełączenia US vs EU"
+ 
++    # ADR-045: godziny, które detektor awarii feedu wskazuje, a ręczne
++    # sprawdzenie je wyjaśniło. Detektor NIE jest osłabiany — pozostaje
++    # przeczulony, bo reguła "pusto przy weekendzie jest OK" ukryłaby
++    # awarię w poniedziałkowy poranek. Odstępstwa są jawną listą z dowodem.
++    #
++    # Dowód = rozmiary plików .bi5 w otoczeniu godziny, wszystkie 6 par.
++    # Wpis bez któregokolwiek z czterech pól jest błędem, nie ostrzeżeniem.
++    # Pozycja dopisana po zobaczeniu wyniku strategii byłaby dopasowaniem
++    # danych do wyniku — stąd wymóg daty akceptacji.
++    accepted_outages:
++      - hour_utc: "2016-09-02T18:00:00+00:00"
++        reason: "awaria feedu Dukascopy wewnatrz dnia handlowego, ~1-2 h"
++        evidence: "17:00 = 4,5-8,9 kB (zapadniete ~10x), 18:00 = 0 na 6 parach,
++                   19:00 = 20-40 kB; 1 bar H1 z 43 634 na pare, 0 transakcji
++                   bez etykiety (reports/gate0_dropped.md)"
++        accepted_on: "2026-09-21"
++      - hour_utc: "2017-12-24T22:00:00+00:00"
++        reason: "opoznione otwarcie tygodnia (Wigilia) — rynek stal, nie awaria"
++        evidence: "caly blok 18:00-22:00 = 0 na 6 parach, dane wracaja o 23:00
++                   (0,5-1,7 kB); brak barow w kazdym zrodle, wiec nie ma czego
++                   odzyskac"
++        accepted_on: "2026-09-21"
++      - hour_utc: "2019-05-26T22:00:00+00:00"
++        reason: "opoznione otwarcie tygodnia — poniedzialek 27.05.2019 to
++                 Memorial Day i UK spring bank holiday"
++        evidence: "blok 18:00-22:00 = 0 na 6 parach, 23:00 = 0-53 B,
++                   00:00 = 6-34 kB"
++        accepted_on: "2026-09-21"
++
+   cohort_b_extra_requirements:
+     - "osobny kalendarz sesji per instrument"
+     - "osobny raport jakości — to CFD brokera, nie dane giełdowe"
+diff --git a/scripts/build_bars.py b/scripts/build_bars.py
+index 6fb944d..001098e 100644
+--- a/scripts/build_bars.py
++++ b/scripts/build_bars.py
+@@ -34,7 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from src.data.dukascopy import decode_bi5  # noqa: E402
+ from src.data.provenance import write_provenance  # noqa: E402
+-from src.data.quality import build_report, render_markdown  # noqa: E402
++from src.data.quality import (  # noqa: E402
++    accepted_outages_from, build_report, render_markdown,
++)
+ from src.data.resample import (  # noqa: E402
+     FREQ_H1, FREQ_M1, bars_from_ticks, ticks_to_frame, validate_bars,
+ )
+@@ -176,10 +178,13 @@ def main() -> int:
+         return 0
+ 
+     report = build_report(h1_by_symbol)
++    # ADR-045: lista ręcznie zaakceptowanych godzin awarii. Raport drukuje ją
++    # razem z dowodem, więc odstępstwo od werdyktu detektora jest widoczne.
++    accepted = accepted_outages_from(cfg)
+     args.report.parent.mkdir(parents=True, exist_ok=True)
+-    args.report.write_text(render_markdown(report), encoding="utf-8")
++    args.report.write_text(render_markdown(report, accepted), encoding="utf-8")
+ 
+-    ok, reasons = report.passes_gate_0()
++    ok, reasons = report.passes_gate_0(accepted=accepted)
+     log.info("Raport: %s", args.report)
+     log.info("Bramka 0: %s", "PRZECHODZI" if ok else "NIE PRZECHODZI")
+     for r in reasons:
+diff --git a/scripts/gate0.py b/scripts/gate0.py
+index fb07909..1957c61 100644
+--- a/scripts/gate0.py
++++ b/scripts/gate0.py
+@@ -29,7 +29,7 @@ import yaml
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from src.data.dukascopy import pip_size  # noqa: E402
+-from src.data.quality import build_report  # noqa: E402
++from src.data.quality import accepted_outages_from, build_report  # noqa: E402
+ from src.features.technical import compute_features  # noqa: E402
+ from src.harness.market import (  # noqa: E402
+     cost_model_for, load_h1, load_m1, require_fresh_bars,
+@@ -148,7 +148,10 @@ def main() -> int:
+                         params["boot_reps"], args.seed)
+         result.checks.insert(1, martingale)
+         n_dropped = sum(v is None for v in evaluate.memo.values())
+-        quality_ok, quality_reasons = build_report(h1).passes_gate_0()
++        # ADR-045: godziny z `data.quality.accepted_outages` nie blokują
++        # werdyktu; wykryta godzina spoza listy blokuje jak dotąd.
++        quality_ok, quality_reasons = build_report(h1).passes_gate_0(
++            accepted=accepted_outages_from(cfg))
+ 
+         (run.dir / "gate0.md").write_text(
+             render(run.run_id, params, result, spreads, quality_ok, quality_reasons,
+diff --git a/src/data/quality.py b/src/data/quality.py
+index bd3b45f..299ad72 100644
+--- a/src/data/quality.py
++++ b/src/data/quality.py
+@@ -59,6 +59,45 @@ MARKET_HOLIDAYS = {(12, 25), (1, 1)}
+ MAX_HOLIDAY_RUN_HOURS = 36
+ 
+ 
++@dataclass(frozen=True)
++class AcceptedOutage:
++    """Godzina podejrzana o awarię, ręcznie zaakceptowana wg ADR-045.
++
++    Akceptacja jest jawną pozycją w configu, nie regułą w kodzie. Detektor
++    zostaje przeczulony — patrz docstring modułu — a każde odstępstwo od
++    jego werdyktu niesie powód, dowód i datę i jest drukowane w raporcie.
++    """
++    ts: dt.datetime
++    reason: str
++    evidence: str
++    accepted_on: str
++
++
++def accepted_outages_from(cfg: dict) -> list[AcceptedOutage]:
++    """Wczytaj `data.quality.accepted_outages` z configu (ADR-045).
++
++    Brak sekcji znaczy „nic nie zaakceptowano”, nie „akceptuj wszystko”.
++    Każda pozycja MUSI mieć wszystkie cztery pola — wpis bez dowodu byłby
++    cichym stopniem swobody.
++    """
++    raw = (cfg.get("data", {}).get("quality", {}) or {}).get("accepted_outages") or []
++    out = []
++    for i, item in enumerate(raw):
++        missing = {"hour_utc", "reason", "evidence", "accepted_on"} - set(item)
++        if missing:
++            raise ValueError(
++                f"data.quality.accepted_outages[{i}]: brak pól {sorted(missing)} "
++                "— ADR-045 wymaga godziny, powodu, dowodu i daty akceptacji")
++        ts = dt.datetime.fromisoformat(str(item["hour_utc"]))
++        if ts.tzinfo is None:
++            raise ValueError(
++                f"data.quality.accepted_outages[{i}]: `hour_utc` bez strefy "
++                "— godzina musi być jawnie w UTC")
++        out.append(AcceptedOutage(ts.astimezone(UTC), str(item["reason"]),
++                                  str(item["evidence"]), str(item["accepted_on"])))
++    return out
++
++
+ @dataclass
+ class QualityReport:
+     symbol_coverage: pl.DataFrame          # per symbol: bary, luki, pokrycie
+@@ -69,8 +108,40 @@ class QualityReport:
+     invariant_errors: list[str] = field(default_factory=list)
+     holiday_closures: pl.DataFrame | None = None  # 25.12 / 1.01 — nie awarie
+ 
+-    def passes_gate_0(self, max_gap_pct: float = 5.0) -> tuple[bool, list[str]]:
+-        """Kryterium z PROJECT_SPEC §15: luki > 5% barów na >= 2 parach = STOP."""
++    def partition_outages(
++        self, accepted: list[AcceptedOutage] | None = None,
++    ) -> tuple[list[dt.datetime], list[AcceptedOutage], list[AcceptedOutage]]:
++        """Podziel wykryte awarie wg listy akceptacji (ADR-045).
++
++        Zwraca `(nierozstrzygnięte, dopasowane, niedopasowane)`:
++
++        - nierozstrzygnięte — wykryte godziny BEZ pozycji na liście; te blokują,
++        - dopasowane — pozycje listy, które faktycznie odpowiadają wykrytej godzinie,
++        - niedopasowane — pozycje listy, których detektor nie wskazał.
++
++        Niedopasowane nie blokują, ale MUSZĄ być widoczne: literówka w dacie
++        albo pozycja po przebudowie danych znaczy, że lista przestała opisywać
++        rzeczywistość. Sama literówka nie jest groźna (prawdziwa awaria zostaje
++        wtedy nierozstrzygnięta i nadal blokuje), ale cicha rozbieżność
++        między listą a danymi już tak.
++        """
++        by_ts = {a.ts: a for a in (accepted or [])}
++        detected = ([] if self.suspected_outages.is_empty()
++                    else list(self.suspected_outages["ts"]))
++        outstanding = [ts for ts in detected if ts not in by_ts]
++        matched = [by_ts[ts] for ts in detected if ts in by_ts]
++        unmatched = [a for ts, a in by_ts.items() if ts not in set(detected)]
++        return outstanding, matched, sorted(unmatched, key=lambda a: a.ts)
++
++    def passes_gate_0(self, max_gap_pct: float = 5.0,
++                      accepted: list[AcceptedOutage] | None = None,
++                      ) -> tuple[bool, list[str]]:
++        """Kryterium z PROJECT_SPEC §15: luki > 5% barów na >= 2 parach = STOP.
++
++        `accepted` (ADR-045): godziny podejrzane o awarię, sprawdzone ręcznie
++        i zapisane w `data.quality.accepted_outages`. Nie blokują werdyktu.
++        Godzina wykryta, a NIEUJĘTA na liście, blokuje jak dotąd.
++        """
+         reasons: list[str] = []
+ 
+         bad = self.symbol_coverage.filter(pl.col("gap_pct") > max_gap_pct)
+@@ -81,10 +152,12 @@ class QualityReport:
+             )
+         if self.invariant_errors:
+             reasons.append(f"{len(self.invariant_errors)} naruszeń niezmienników barów")
+-        if self.suspected_outages.height:
++        outstanding, _, _ = self.partition_outages(accepted)
++        if outstanding:
+             reasons.append(
+-                f"{self.suspected_outages.height} godzin podejrzanych o awarię feedu "
+-                "— wymagają ręcznego sprawdzenia przed akceptacją danych"
++                f"{len(outstanding)} godzin podejrzanych o awarię feedu "
++                "— wymagają ręcznego sprawdzenia przed akceptacją danych "
++                "(ADR-045: pozycja w `data.quality.accepted_outages`)"
+             )
+         return (not reasons), reasons
+ 
+@@ -287,9 +360,11 @@ def build_report(bars_by_symbol: dict[str, pl.DataFrame]) -> QualityReport:
+     )
+ 
+ 
+-def render_markdown(report: QualityReport) -> str:
++def render_markdown(report: QualityReport,
++                    accepted: list[AcceptedOutage] | None = None) -> str:
+     """Raport w Markdown — wersjonowany w repo jako dowód dla Bramki 0."""
+-    ok, reasons = report.passes_gate_0()
++    ok, reasons = report.passes_gate_0(accepted=accepted)
++    outstanding, matched, unmatched = report.partition_outages(accepted)
+     lines = [
+         "# Raport jakości danych",
+         "",
+@@ -325,20 +400,53 @@ def render_markdown(report: QualityReport) -> str:
+     lines += ["", "## Podejrzenie awarii feedu", ""]
+     if report.suspected_outages.is_empty():
+         lines.append("Brak — żadna godzina handlowa nie jest pusta u wszystkich par naraz.")
++    elif not outstanding:
++        lines.append(
++            f"Wykryto {report.suspected_outages.height}, wszystkie zaakceptowane "
++            "ręcznie — patrz sekcja niżej. Brak godzin nierozstrzygniętych.")
+     else:
+         lines += [
+-            f"**{report.suspected_outages.height} godzin** bez danych u wszystkich par "
++            f"**{len(outstanding)} godzin** bez danych u wszystkich par "
+             "jednocześnie, mimo że wg wyprowadzonego kalendarza są handlowe.",
+             "",
+             "To podpis awarii feedu, nie zamknięcia rynku. Wymaga ręcznego sprawdzenia "
+-            "przed akceptacją danych — inaczej luka pozostanie niewidoczna dla backtestu.",
++            "przed akceptacją danych — inaczej luka pozostanie niewidoczna dla backtestu. "
++            "Akceptacja: pozycja w `data.quality.accepted_outages` (ADR-045).",
+             "",
+             "| Godzina UTC |", "|---|",
+         ]
+-        for ts in report.suspected_outages["ts"].head(50):
++        for ts in outstanding[:50]:
+             lines.append(f"| {ts:%Y-%m-%d %H:%M} |")
+-        if report.suspected_outages.height > 50:
+-            lines.append(f"| ... jeszcze {report.suspected_outages.height - 50} |")
++        if len(outstanding) > 50:
++            lines.append(f"| ... jeszcze {len(outstanding) - 50} |")
++
++    # ADR-045: odstępstwo od werdyktu detektora musi być widoczne w raporcie,
++    # razem z dowodem. Inaczej akceptacja byłaby cichym stopniem swobody.
++    if matched or unmatched:
++        lines += ["", "## Zaakceptowane ręcznie (ADR-045)", ""]
++    if matched:
++        lines += [
++            f"**{len(matched)} godzin** wykrytych przez detektor i zaakceptowanych "
++            "jawnie w `data.quality.accepted_outages`. Detektor NIE został "
++            "osłabiony — każda z tych godzin nadal jest wykrywana.",
++            "",
++            "| Godzina UTC | Powód | Dowód | Zaakceptowano |", "|---|---|---|---|",
++        ]
++        for a in sorted(matched, key=lambda x: x.ts):
++            lines.append(f"| {a.ts:%Y-%m-%d %H:%M} | {a.reason} | {a.evidence} "
++                         f"| {a.accepted_on} |")
++    if unmatched:
++        lines += [
++            "",
++            f"**Uwaga: {len(unmatched)} pozycji listy akceptacji nie odpowiada "
++            "żadnej wykrytej godzinie.** Lista przestała opisywać dane — literówka "
++            "w dacie albo skutek przebudowy barów. Nie blokuje werdyktu (prawdziwa "
++            "awaria zostałaby nierozstrzygnięta i zablokowała), ale wymaga sprawdzenia.",
++            "",
++            "| Godzina UTC | Powód |", "|---|---|",
++        ]
++        for a in unmatched:
++            lines.append(f"| {a.ts:%Y-%m-%d %H:%M} | {a.reason} |")
+ 
+     if report.holiday_closures is not None and not report.holiday_closures.is_empty():
+         hol = report.holiday_closures.with_columns(pl.col("ts").dt.date().alias("d"))
+diff --git a/tests/test_quality.py b/tests/test_quality.py
+index 868bd4c..cc9288c 100644
+--- a/tests/test_quality.py
++++ b/tests/test_quality.py
+@@ -9,11 +9,15 @@ import datetime as dt
+ import polars as pl
+ import pytest
+ 
++from pathlib import Path
++
+ from src.data.quality import (
+-    build_report, missing_trading_hours, render_markdown, trading_cells,
++    AcceptedOutage, accepted_outages_from, build_report, missing_trading_hours,
++    render_markdown, trading_cells,
+ )
+ 
+ UTC = dt.timezone.utc
++ROOT = Path(__file__).resolve().parents[1]
+ 
+ 
+ def bars(hours: list[dt.datetime], spread: float = 3e-5) -> pl.DataFrame:
+@@ -164,6 +168,126 @@ def test_invariant_violation_fails_gate_0():
+     assert not ok and any("niezmienn" in r for r in reasons)
+ 
+ 
++# --- Ręczna akceptacja godzin awarii (ADR-045) ------------------------------
++
++def _outage_report(outage: dt.datetime, weeks: int = 12):
++    hrs = weekday_hours(MONDAY, weeks)
++    return build_report({s: bars(_without(hrs, [outage]))
++                         for s in ("EURUSD", "GBPUSD", "USDJPY")})
++
++
++def _accept(ts: dt.datetime) -> AcceptedOutage:
++    return AcceptedOutage(ts=ts, reason="sprawdzone ręcznie",
++                          evidence="otoczenie: dane przed i po", accepted_on="2026-09-21")
++
++
++def test_accepted_outage_does_not_block_gate_0():
++    outage = dt.datetime(2019, 3, 19, 10, tzinfo=UTC)
++    rep = _outage_report(outage)
++
++    assert not rep.passes_gate_0()[0], "bez listy akceptacji ma nadal blokować"
++    ok, reasons = rep.passes_gate_0(accepted=[_accept(outage)])
++    assert ok, reasons
++
++
++def test_detector_is_not_weakened_by_acceptance():
++    """Zaakceptowana godzina nadal JEST wykrywana — lista zmienia werdykt, nie detekcję."""
++    outage = dt.datetime(2019, 3, 19, 10, tzinfo=UTC)
++    rep = _outage_report(outage)
++
++    rep.passes_gate_0(accepted=[_accept(outage)])
++
++    assert rep.suspected_outages["ts"].to_list() == [outage]
++
++
++def test_outage_outside_the_accept_list_still_blocks():
++    """Rdzeń ADR-045: akceptacja jest punktowa, nie hurtowa."""
++    hrs = weekday_hours(MONDAY, 12)
++    known = dt.datetime(2019, 3, 19, 10, tzinfo=UTC)
++    new = dt.datetime(2019, 4, 2, 14, tzinfo=UTC)
++    rep = build_report({s: bars(_without(hrs, [known, new]))
++                        for s in ("EURUSD", "GBPUSD", "USDJPY")})
++
++    ok, reasons = rep.passes_gate_0(accepted=[_accept(known)])
++
++    assert not ok
++    assert any("awarię feedu" in r for r in reasons)
++    outstanding, matched, unmatched = rep.partition_outages([_accept(known)])
++    assert outstanding == [new]
++    assert [a.ts for a in matched] == [known]
++    assert unmatched == []
++
++
++def test_accept_entry_matching_nothing_is_reported_not_silent():
++    """Literówka w dacie nie może zniknąć — lista ma opisywać dane."""
++    outage = dt.datetime(2019, 3, 19, 10, tzinfo=UTC)
++    typo = dt.datetime(2019, 3, 19, 11, tzinfo=UTC)      # godzina obok
++    rep = _outage_report(outage)
++
++    ok, _ = rep.passes_gate_0(accepted=[_accept(typo)])
++    outstanding, matched, unmatched = rep.partition_outages([_accept(typo)])
++
++    assert not ok, "prawdziwa awaria musi nadal blokować przy literówce"
++    assert outstanding == [outage] and matched == []
++    assert [a.ts for a in unmatched] == [typo]
++    assert "nie odpowiada" in render_markdown(rep, [_accept(typo)])
++
++
++def test_report_prints_acceptance_with_evidence():
++    outage = dt.datetime(2019, 3, 19, 10, tzinfo=UTC)
++    rep = _outage_report(outage)
++
++    md = render_markdown(rep, [_accept(outage)])
++
++    assert "Bramka 0: **PRZECHODZI**" in md
++    assert "Zaakceptowane ręcznie (ADR-045)" in md
++    assert "otoczenie: dane przed i po" in md       # dowód, nie tylko data
++    assert "2026-09-21" in md
++    assert "2019-03-19 10:00" in md
++
++
++def test_accepted_outages_from_config_requires_all_four_fields():
++    full = {"hour_utc": "2016-09-02T18:00:00+00:00", "reason": "r",
++            "evidence": "e", "accepted_on": "2026-09-21"}
++    cfg = {"data": {"quality": {"accepted_outages": [full]}}}
++    got = accepted_outages_from(cfg)
++    assert got == [AcceptedOutage(dt.datetime(2016, 9, 2, 18, tzinfo=UTC),
++                                  "r", "e", "2026-09-21")]
++
++    for field in ("reason", "evidence", "accepted_on", "hour_utc"):
++        broken = {k: v for k, v in full.items() if k != field}
++        with pytest.raises(ValueError, match="ADR-045|brak pól"):
++            accepted_outages_from({"data": {"quality": {"accepted_outages": [broken]}}})
++
++    with pytest.raises(ValueError, match="strefy"):
++        accepted_outages_from({"data": {"quality": {"accepted_outages": [
++            {**full, "hour_utc": "2016-09-02T18:00:00"}]}}})
++
++
++def test_missing_accept_list_accepts_nothing():
++    """Brak sekcji w configu znaczy „nic nie zaakceptowano”, nie „wszystko OK”."""
++    outage = dt.datetime(2019, 3, 19, 10, tzinfo=UTC)
++    rep = _outage_report(outage)
++
++    assert accepted_outages_from({}) == []
++    assert accepted_outages_from({"data": {"quality": {}}}) == []
++    assert not rep.passes_gate_0(accepted=accepted_outages_from({}))[0]
++
++
++def test_config_accepts_exactly_the_three_audited_hours():
++    """Pozycje z ADR-045 muszą odpowiadać temu, co wskazał detektor na 2015-2021."""
++    import yaml
++    cfg = yaml.safe_load((ROOT / "config" / "v1_baseline.yaml").read_text())
++    got = {a.ts for a in accepted_outages_from(cfg)}
++    assert got == {
++        dt.datetime(2016, 9, 2, 18, tzinfo=UTC),
++        dt.datetime(2017, 12, 24, 22, tzinfo=UTC),
++        dt.datetime(2019, 5, 26, 22, tzinfo=UTC),
++    }
++    for a in accepted_outages_from(cfg):
++        assert a.evidence.strip() and a.reason.strip() and a.accepted_on == "2026-09-21"
++
++
+ # --- Renderowanie -----------------------------------------------------------
+ 
+ def test_markdown_states_verdict_and_spread():

@@ -1,0 +1,9 @@
+{
+  "event": "end",
+  "run_id": "20260922T180657Z-3acbf1",
+  "ts_utc": "2026-09-22T18:17:05.969823+00:00",
+  "status": "error",
+  "error": "KeyError: 'brak stopy overnight dla USD na 2015-01-22 (szukano wpisu <= 2014-12-01)'",
+  "duration_s": 607.958,
+  "metrics": {}
+}

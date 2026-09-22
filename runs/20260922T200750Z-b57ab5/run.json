@@ -1,0 +1,55 @@
+{
+  "event": "start",
+  "run_id": "20260922T200750Z-b57ab5",
+  "ts_utc": "2026-09-22T20:07:50.462358+00:00",
+  "purpose": "V1a: sensitivity grid on the research split",
+  "kind": "strategy",
+  "n_variants": 7,
+  "params": {
+    "symbols": [
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "AUDUSD",
+      "USDCAD",
+      "EURJPY"
+    ],
+    "data_start": "2015-01-01T00:00:00+00:00",
+    "trade_start": "2016-01-01T00:00:00+00:00",
+    "split_end": "2021-12-31T23:59:00+00:00",
+    "variants": [
+      "baseline",
+      "D-",
+      "D+",
+      "S-",
+      "S+",
+      "T-",
+      "T+"
+    ],
+    "control_reps": 200,
+    "pool_per_group": 3000,
+    "boot_reps": 10000,
+    "block_days": 20,
+    "seed": 0,
+    "markup_annual_pct": 0.5,
+    "n_events": 1740
+  },
+  "git_commit": "4004211ff3f59fee9091a4e267f608a7a038ed46",
+  "git_dirty": false,
+  "git_diff_sha256": null,
+  "git_untracked": [],
+  "config_path": "config/v1_baseline.yaml",
+  "config_sha256": "970cd65eead9a854f2f6d964cf30e7b7d2482852628e350abd231efb86365bf1",
+  "config_freeze_commit": "6269ff51472912e3b6720aaba4eed295e894bc1a",
+  "frozen_sha256": "79ca85dfd80a6e955141aa2d0107b966aec1b31dbbf2a53b0a1f71466a257e43",
+  "argv": [
+    "scripts/run_v1a.py"
+  ],
+  "python": "3.12.3",
+  "packages": {
+    "polars": "1.44.2",
+    "numpy": "2.5.3",
+    "pyarrow": "25.0.1",
+    "PyYAML": "6.0.3"
+  }
+}

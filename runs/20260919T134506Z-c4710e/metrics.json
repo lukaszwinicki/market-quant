@@ -1,0 +1,32 @@
+{
+  "event": "end",
+  "run_id": "20260919T134506Z-c4710e",
+  "ts_utc": "2026-09-19T13:56:27.879426+00:00",
+  "status": "ok",
+  "error": null,
+  "duration_s": 681.403,
+  "metrics": {
+    "passed": true,
+    "data_quality_passed": true,
+    "gross_r": 0.009598237677451849,
+    "gross_ci": [
+      -0.026672114761129333,
+      0.04453457975724451
+    ],
+    "net_r": -0.0010058154831298742,
+    "net_ci": [
+      -0.03692303412013266,
+      0.03355367140270523
+    ],
+    "mean_cost_r": 0.010604053160581724,
+    "resolution": 3.3575225171007888,
+    "n_trades": 23719,
+    "n_unique_trades": 21170,
+    "n_days": 324,
+    "checks": {
+      "losowe wejścia: brutto ≈ 0 (E[R] ≈ −koszt)": true,
+      "podłoga min_roundturn_cost_pips stosowana": true,
+      "spread z ticków bid/ask (nie średni, nie mid)": true
+    }
+  }
+}

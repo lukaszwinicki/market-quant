@@ -1,0 +1,70 @@
+{
+  "event": "end",
+  "run_id": "20260922T200750Z-b57ab5",
+  "ts_utc": "2026-09-22T20:19:48.944277+00:00",
+  "status": "ok",
+  "error": null,
+  "duration_s": 718.459,
+  "metrics": {
+    "passed_computed_criteria": false,
+    "benchmark_section_12_computed": true,
+    "expectancy_r": -0.05603158034948991,
+    "expectancy_ci": [
+      -0.12250469517762215,
+      0.01185710996249877
+    ],
+    "t_stat": -1.6216763812674457,
+    "dsr": 0.1739448755604624,
+    "sharpe": -0.06013046887844986,
+    "sharpe_benchmark": 0.013124201538013386,
+    "n_trials": 8,
+    "effective_n": 172,
+    "overlap_fraction": 0.9594594594594594,
+    "pbo": 0.6121989121989122,
+    "n_trades": 889,
+    "n_decisions": 224420,
+    "variants": {
+      "baseline": -0.056031580349489886,
+      "D-": -0.04975411610315958,
+      "D+": -0.047673370673449955,
+      "S-": -0.04435844851359118,
+      "S+": -0.030298564135603296,
+      "T-": -0.05280085159153163,
+      "T+": -0.05288205490393624
+    },
+    "cost_ladder": {
+      "1x": -0.056031580349489886,
+      "2x": -0.07297088163266095,
+      "3x": -0.08991018291583203
+    },
+    "markup_ladder": {
+      "0.5%": -0.056031580349489886,
+      "1%": -0.06731939426721503,
+      "2%": -0.08989502210266527
+    },
+    "subperiods": {
+      "2016-01..2017-12": -0.10188549734162991,
+      "2017-12..2020-01": -0.03812979105760283,
+      "2020-01..2021-12": -0.028969305473699136
+    },
+    "split_r_median": -0.03809979558831786,
+    "control_random_p": 0.8009950248756219,
+    "control_shuffled_p": 0.8109452736318408,
+    "control_shifted_expectancy": -0.026843676823474705,
+    "control_dd_p": 0.9402985074626866,
+    "checks": {
+      "expectancy netto ≥ +0.10 R": false,
+      "t ≥ 2.0": false,
+      "DSR ≥ 0.95 (ADR-027)": false,
+      "PBO ≤ 0.3": false,
+      "dodatnie przy 2× kosztach": false,
+      "dodatnie na CAŁEJ osi marży (ADR-037)": false,
+      "≥ 4 par dodatnich": false,
+      "≥ 2 podokresy dodatnie": false,
+      "płaskowyż (ADR-028)": false,
+      "kontrola #1: p < 0.05 wobec losowych wejść (ADR-048)": false,
+      "kontrola #5: koszyk carry + trend (§12) pobity": false,
+      "kontrola #4: carry-only pobity (ADR-044)": false
+    }
+  }
+}

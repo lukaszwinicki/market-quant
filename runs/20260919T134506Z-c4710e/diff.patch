@@ -1,0 +1,31 @@
+diff --git a/src/harness/market.py b/src/harness/market.py
+index ff81215..4d84cef 100644
+--- a/src/harness/market.py
++++ b/src/harness/market.py
+@@ -24,6 +24,7 @@ from ..execution.simulator import CostModel
+ UTC = dt.timezone.utc
+ ROOT = Path(__file__).resolve().parents[2]
+ BARS_M1 = ROOT / "data" / "bars" / "m1"
++BARS_H1 = ROOT / "data" / "bars" / "h1"
+ 
+ 
+ class SealedHoldoutError(RuntimeError):
+@@ -44,6 +45,18 @@ def load_m1(symbol: str, start: dt.datetime, end: dt.datetime, cfg: dict, *,
+ 
+     Czyta tylko partycje lat, które zakres obejmuje.
+     """
++    return _load_bars(symbol, start, end, cfg, root, unseal)
++
++
++def load_h1(symbol: str, start: dt.datetime, end: dt.datetime, cfg: dict, *,
++            root: Path = BARS_H1, unseal: bool = False) -> pl.DataFrame:
++    """Bary H1 — ta sama pieczęć co M1. Cechy liczone z hold-outu to też
++    odczyt hold-outu."""
++    return _load_bars(symbol, start, end, cfg, root, unseal)
++
++
++def _load_bars(symbol: str, start: dt.datetime, end: dt.datetime, cfg: dict,
++               root: Path, unseal: bool) -> pl.DataFrame:
+     if start.tzinfo is None or end.tzinfo is None:
+         raise ValueError("start i end muszą być tz-aware (UTC)")
+     s0, s1 = sealed_range(cfg)

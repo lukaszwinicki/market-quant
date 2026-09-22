@@ -1,0 +1,735 @@
+# =============================================================================
+# v1_baseline.yaml — PREREJESTRACJA V1
+# =============================================================================
+#
+# Ten plik jest artefaktem prerejestracyjnym, nie plikiem do strojenia.
+# Każda wartość została ustalona PRZED pierwszym backtestem.
+#
+# ZASADA NADRZĘDNA:
+#   Po zobaczeniu pierwszego wyniku backtestu ten plik jest skażony.
+#   Każda późniejsza zmiana jest decyzją podjętą pod wpływem wyniku —
+#   nawet jeśli szczerze uważasz, że nie jest.
+#
+#   Zmiana czegokolwiek oznaczonego `frozen: true` unieważnia wszystkie
+#   dotychczasowe wyniki i wymaga nowego wpisu w docs/DECISIONS.md.
+#
+# Źródło:        docs/PROJECT_SPEC.md v1.0
+# Uzasadnienia:  docs/AUDIT_REPORT.md, docs/DECISIONS.md
+# =============================================================================
+
+meta:
+  version: "1.0"
+  created: "2026-09-18"
+  status: "PREREGISTERED"
+  spec: "docs/PROJECT_SPEC.md"
+  spec_commit: "e765753"
+  # Punktem zamrożenia jest commit dodający ten plik:
+  #   git log --diff-filter=A --format=%H -- config/v1_baseline.yaml
+  # Każdy raport z backtestu musi cytować ten hash.
+
+# =============================================================================
+# HIPOTEZA
+# =============================================================================
+hypothesis:
+  h1: >
+    Istnieje prosta, deterministyczna strategia swingowa na 6 głównych
+    parach FX, oparta na momentum wielohoryzontowym i pozycji w zakresie
+    cenowym, o expectancy istotnie większym od zera po realistycznych
+    kosztach i po korekcie na liczbę przeprowadzonych prób.
+  h0: "Takiej strategii nie ma."
+  burden_of_proof: "H1"
+  prior: "niski"
+  success_definition: >
+    Liczba z przedziałem ufności uzyskana w ~11 tygodni. Wynik
+    "expectancy = -0.01 R, CI [-0.06, +0.04], H1 odrzucone" jest
+    pełnoprawnym sukcesem projektu.
+
+# =============================================================================
+# INSTRUMENTY — ZAMROŻONE
+# =============================================================================
+instruments:
+  frozen: true
+
+  cohort_a:
+    role: "discovery"
+    gates: [0, 1, 2, 3, 4]
+    note: "Jedyny zbiór, na którym wolno cokolwiek dobierać."
+    symbols: [EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY]
+
+  cohort_b:
+    role: "replication"
+    gates: ["0B", 5]
+    note: >
+      NIE jest zbiorem treningowym. Parametry zamrożone hashem gita
+      po bramce 2. Zero dostrajania, zero ponownego dopasowania.
+    symbols: [XAUUSD, WTI, SPX500, DAX40]
+
+  # Decyzja podjęta przed pierwszym backtestem. Uzasadnienie: czystszy
+  # benchmark bety, węższy spread względem ATR, lepsza historia CFD.
+  # Obserwacja "Nasdaq ładniej trenduje" to wiedza in-sample i nie może
+  # wpływać na ten wybór.
+  us_index_choice:
+    selected: "SPX500"
+    rejected: "NASDAQ"
+    frozen: true
+
+  excluded:
+    CHF:     "Zerwanie pega EURCHF 2015-01-15 — seria niereprezentatywna"
+    GBPJPY:  "Kandydat na selection bias (>>bo ładnie trenduje<<)"
+    exotics: "TRY, ZAR, MXN — szeroki spread, ryzyko polityczne, słabe dane"
+    DJIA:    "Korelacja z S&P ~0.95, ważony ceną — zero wartości informacyjnej"
+    NASDAQ:  "Korelacja z S&P ~0.90-0.95 — wybrany jeden indeks US"
+    SILVER:  "Korelacja ze złotem ~0.8, wyższa zmienność — V2"
+    NIKKEI:  "Skorelowany z S&P i z USDJPY (już w kohorcie A) — V2"
+
+  effective_factors:
+    cohort_a: 3        # USD, EUR, JPY
+    cohort_a_plus_b: 6
+    detectable_edge_a_only_R: 0.09
+    detectable_edge_pooled_R: 0.06
+
+# =============================================================================
+# DANE
+# =============================================================================
+data:
+  timezone: "UTC"                    # wszędzie, bez wyjątków
+  base_timeframe: "H1"               # jedyna baza sygnału
+  price_convention: "bid_ask_separate"
+  mid_price_allowed: false
+
+  # Granica świecy D1 jest konwencją, nie faktem rynkowym — FX nie ma
+  # oficjalnego zamknięcia, a każdy broker stosuje własną. Po ADR-023
+  # to atr_d1_14 wyznacza stopy, więc konwencja wpływa na dystans SL.
+  d1_boundary:
+    research: "00:00 UTC"
+    frozen: true
+
+    # ADR-041: doba z mniej niż `min_h1_bars` barami H1 jest NIEPEŁNA i nie
+    # wchodzi do szeregu dziennego. Bez tego sesja niedzielna (21:00-24:00
+    # UTC, 3 bary) tworzy własny bar dzienny i zaniża atr_d1_14 o ~12% na
+    # wszystkich sześciu parach. Próg z pomiaru zakresów dobowych
+    # (reports/atr_sunday_stub.md §3b): niedziela 20-25% zakresu pełnej
+    # doby, 25.12 przy 8 barach ~36%, piątek przy 21 barach 99-116%.
+    min_h1_bars: 12
+
+    # Kryterium kompletności stosuje się do KAŻDEGO wariantu granicy, nie
+    # tylko do 00:00 UTC — inaczej test odporności porównywałby szereg
+    # z kikutami z szeregami bez nich.
+    # Zamiast dopasowywać się do konkretnego brokera, traktujemy to jako
+    # test odporności. Jeśli wynik istotnie zależy od granicy dnia,
+    # problem jest w strategii, nie w brokerze.
+    robustness_test:
+      alternatives: ["17:00 NY", "22:00 UTC"]
+      run_at_gate: 2
+      fail_if: "expectancy zmienia znak lub spada o >30% między wariantami"
+
+  splits:
+    frozen: true
+    research:
+      start: "2015-01-01"
+      end: "2021-12-31"
+      access: "swobodny, CPCV"
+    validation:
+      start: "2022-01-01"
+      end: "2023-12-31"
+      access: "ograniczone uruchomienia, każde logowane"
+    sealed_holdout:
+      start: "2024-01-01"
+      end: "2025-12-31"
+      access: "ZERO do bramki 4; dokładnie jedno uruchomienie"
+      note: "Po uruchomieniu projekt się kończy — go albo no-go."
+
+  sources:
+    prices:
+      primary: "dukascopy_tick"
+      pipeline: "tick -> M1 -> H1"
+      format: "parquet"
+      partition: [symbol, year]
+      cross_check: "histdata"
+      cross_check_agreement_min: 0.99
+    yields:
+      primary: "fred_alfred"
+      series_us: "DGS2"
+      others: [ecb_data_portal, boe, boj, ons]
+      access_mode: "realtime_start = data decyzji"
+      publication_lag_buffer_days: 1
+    calendar:
+      sources: [bls, bea, eurostat, ons, central_bank_schedules]
+      fields: [timestamp_utc, currency, name, rank]
+      values_allowed: false   # KRYTYCZNE: tylko harmonogram, zero actual/consensus
+
+  forbidden_sources:
+    - forexfactory_scraping     # ToS + backfill => brak archiwum point-in-time
+    - investing_com_scraping
+    - yfinance                  # brak bid/ask, jakość niepewna
+    - alpha_vantage             # limity, krótka historia intraday
+    - cme_fedwatch_history      # płatne; substytut: 2Y differential
+
+  quality:
+    max_gap_seconds: 60
+    gap_report_required: true
+    dst_handling: "jawne, różne daty przełączenia US vs EU"
+
+  cohort_b_extra_requirements:
+    - "osobny kalendarz sesji per instrument"
+    - "osobny raport jakości — to CFD brokera, nie dane giełdowe"
+    - "jawna obsługa dywidend na CFD indeksu cenowego"
+    - "model finansowania zwalidowany wobec realnych stawek brokera"
+    - "decyzja o WTI 2020-04-20 (cena ujemna) PRZED zobaczeniem wyników"
+    - "reguła traktowania circuit breakers ustalona ex ante"
+
+# =============================================================================
+# CECHY
+# =============================================================================
+# DWIE ROZŁĄCZNE SKALE ZMIENNOŚCI — nie wolno ich mylić:
+#   atr_h1_14  -> WYŁĄCZNIE normalizacja cech
+#   atr_d1_14  -> WYŁĄCZNIE skalowanie barier i sizingu
+features:
+  frozen: true
+  normalization: "expanding_window"   # tylko przeszłość, nigdy pełna próba
+
+  volatility_scales:
+    atr_h1_14:
+      timeframe: "H1"
+      period: 14
+      role: "normalizator cech"
+      is_predictive_feature: false
+    atr_d1_14:
+      timeframe: "D1"
+      period: 14
+      role: "skalowanie barier i sizingu"
+      is_predictive_feature: false
+
+  technical:
+    - name: mom_24
+      formula: "(close - close[-24]) / (atr_h1_14 * sqrt(24))"
+    - name: mom_120
+      formula: "(close - close[-120]) / (atr_h1_14 * sqrt(120))"
+    - name: mom_480
+      formula: "(close - close[-480]) / (atr_h1_14 * sqrt(480))"
+    - name: donch_pos_55
+      formula: "(close - min_55) / (max_55 - min_55)"
+      range: [0.0, 1.0]
+    - name: vol_pct_252
+      formula: "percentile_rank(atr_d1_14, expanding_window >= 252d)"
+
+  # Czynnik sqrt(n) skaluje każde momentum zmiennością jego własnego
+  # horyzontu. Bez niego trzy cechy momentum różnią się skalą o ~sqrt(20),
+  # mają nieporównywalne rozkłady i psują regularyzację L2.
+
+  macro:   # tylko V1b
+    - name: carry_2y
+      formula: "yield_2y(base_ccy) - yield_2y(quote_ccy)"
+    - name: d_carry_20d
+      formula: "carry_2y(t) - carry_2y(t - 20 business days)"
+
+  pooling:
+    across_instruments: true
+    significance_test_blocks: "cały dzień"   # nigdy po obserwacji
+
+  forbidden:
+    - RSI
+    - MACD
+    - ADX
+    - Stochastic
+    - CCI
+    - WilliamsR
+    - BollingerBands
+    - support_resistance
+    - volume              # w spot FX nie istnieje prawdziwy wolumen
+    - BOS
+    - CHoCH
+    - FVG
+    - order_blocks
+    - liquidity_grab
+    - multi_timeframe_features
+
+# =============================================================================
+# ETYKIETY
+# =============================================================================
+labels:
+  frozen: true
+  method: "triple_barrier"
+  sl_multiple: 2.0            # * atr_d1_14
+  tp_multiple: 4.0            # * atr_d1_14
+  time_barrier_business_days: 10
+  time_barrier_outcome: 0     # konserwatywnie
+  target: "P(TP before SL)"
+
+  # Warunek poprawności: bariera ~ sigma * sqrt(T).
+  # Dla T=10 dni i sigma_dzienna ~0.55% na EURUSD daje to ~1.1% ceny.
+  # 2*atr_d1_14 spełnia ten warunek; 2*atr_h1_14 (~0.1%) NIE.
+  barrier_scale_ref: "docs/DECISIONS.md ADR-023"
+
+  base_rate_random_walk: 0.33     # przy RR 1:2
+  breakeven_with_costs: 0.35      # model musi stabilnie bić tę wartość
+
+# =============================================================================
+# SYGNAŁ V1a — REGUŁA DETERMINISTYCZNA
+# =============================================================================
+signal_v1a:
+  # JEDYNE parametry swobodne w całym V1
+  free_parameters:
+    donchian_lookback: 55
+    sl_multiple: 2.0
+    tp_multiple: 4.0
+
+  # ADR-028: jeden parametr naraz, ~±25%. Raportowany jest ZAWSZE
+  # baseline; siatka służy tylko PBO i testowi płaskowyżu. Każdy wariant
+  # liczy się do N w DSR (ADR-029).
+  sensitivity_grid:
+    - {name: baseline, donchian_lookback: 55, sl_multiple: 2.0, tp_multiple: 4.0}
+    - {name: D-,       donchian_lookback: 40, sl_multiple: 2.0, tp_multiple: 4.0}
+    - {name: D+,       donchian_lookback: 70, sl_multiple: 2.0, tp_multiple: 4.0}
+    - {name: S-,       donchian_lookback: 55, sl_multiple: 1.5, tp_multiple: 4.0}
+    - {name: S+,       donchian_lookback: 55, sl_multiple: 2.5, tp_multiple: 4.0}
+    - {name: T-,       donchian_lookback: 55, sl_multiple: 2.0, tp_multiple: 3.0}
+    - {name: T+,       donchian_lookback: 55, sl_multiple: 2.0, tp_multiple: 5.0}
+
+  # Progi ustalone z góry i NIETYKALNE
+  frozen_thresholds:
+    mom_480_min: 0.0
+    donch_pos_min: 0.80
+    vol_pct_max: 0.95
+
+  entry:
+    timing: "zamknięcie świecy H1"
+    order_type: "market"
+    price_side: "ask dla long, bid dla short"
+
+  exit:
+    sl: "entry -/+ 2.0 * atr_d1_14"
+    tp: "entry +/- 4.0 * atr_d1_14"
+    time_business_days: 10
+    trailing: false
+    breakeven_move: false
+    regime_exit: false
+
+# =============================================================================
+# SYGNAŁ V1b — MODEL PROBABILISTYCZNY (tylko po bramce 2)
+# =============================================================================
+signal_v1b:
+  model: "logistic_regression"
+  penalty: "l2"
+  c_selection: "wyłącznie fold wewnętrzny"
+  max_features: 8
+  calibration:
+    method: "isotonic"
+    fold: "osobny fold kalibracyjny"     # NIGDY treningowy
+  ev_formula: "p_hat * 2.0 - (1 - p_hat) * 1.0 - cost_R"
+  ev_threshold_R: 0.10                   # prerejestrowany, nie strojony
+
+  required_reporting:
+    - reliability_diagram
+    - brier_score_top_ev_decile          # nie na całej próbie
+    - predicted_vs_realized_R_per_ev_decile
+
+# =============================================================================
+# BLACKOUT MAKRO
+# =============================================================================
+blackout:
+  frozen: true
+  window_before_minutes: 30
+  window_after_minutes: 120
+  effect: "zakaz otwierania nowej pozycji"
+  closes_existing_positions: false       # osobna hipoteza, V2
+
+  high_impact_events:
+    rate_decisions: [FOMC, ECB, BOE, BOJ, RBA, BOC, RBNZ, SNB]
+    us: ["CPI", "NFP / Employment Situation", "PCE", "Retail Sales", "GDP advance"]
+    ea: ["HICP flash", "ECB press conference"]
+    uk: ["CPI", "Labour market"]
+    other: ["krajowe CPI dla walut z koszyka"]
+
+# =============================================================================
+# NO TRADE — LISTA ZAMKNIĘTA
+# =============================================================================
+no_trade_conditions:
+  - {id: 1, rule: "blackout(t) == true"}
+  - {id: 2, rule: "vol_pct_252 > 0.95"}
+  - {id: 3, rule: "EV <= 0.10 R", applies_to: v1b}
+  - {id: 4, rule: "limit ekspozycji na którąkolwiek walutę pary osiągnięty"}
+  - {id: 5, rule: "limit ryzyka portfela osiągnięty"}
+  - {id: 6, rule: "istnieje otwarta pozycja na tej parze"}
+  - {id: 7, rule: "luka > 2 barów H1 w ostatnich 480 LUB brak yieldów < 5 dni roboczych",
+     note: "Brak danych MUSI być jawnym, logowanym powodem NO TRADE."}
+  - {id: 8, rule: "okno rollover 16:45-17:15 NY"}
+  - {id: 9, rule: "piątek po 15:00 NY"}
+  - {id: 10, rule: "moment decyzji wypada w niedzielę czasu UTC",
+     note: "ADR-042: sesja otwarcia tygodnia. Do ADR-041 te bary były blokowane
+            brakiem atr_d1_14, czyli przypadkiem, a nie regułą. UTC, nie NY —
+            w czasie NY warunek objąłby poranną sesję tokijską."}
+
+default_state: "NO_TRADE"
+log_every_no_trade_with_reason: true
+
+# =============================================================================
+# RISK ENGINE
+# =============================================================================
+risk:
+  measurement_unit: "R"
+  # r% NIE jest parametrem badawczym: przy sizingu liniowym skaluje krzywą,
+  # nie zmienia expectancy w R ani Sharpe'a. Dobierany po bramce 4
+  # z rozkładu drawdownu.
+  risk_per_trade_pct: null
+
+  position_sizing: "(equity * r_pct) / stop_distance"
+  stop_definition: "2.0 * atr_d1_14"
+  additional_vol_scaling: false          # podwójne liczenie — zakazane
+
+  max_net_risk_per_currency_R: 2.0
+  max_portfolio_risk_R: 6.0
+  intra_block_correlation_assumption: 1.0
+  max_positions_per_symbol: 1
+
+  currency_blocks:
+    usd: [USD]
+    eur: [EUR, CHF]
+    gbp: [GBP]
+    jpy: [JPY]
+    commodity: [AUD, NZD, CAD]
+
+  forbidden:
+    pyramiding: true
+    fractional_kelly: true
+    drawdown_derisking: true             # TEST w V2
+    fitted_covariance_matrix: true       # błąd estymacji dominuje
+
+# =============================================================================
+# MODEL KOSZTÓW
+# =============================================================================
+costs:
+  # ZASADA: strategia ma być broker-agnostyczna. Edge, który przeżywa
+  # tylko u brokera o najwęższym spreadzie, nie jest edge'em tylko
+  # artefaktem zaokrąglenia. Mechanizmem zapewniającym niezależność
+  # od brokera jest ZAPAS KOSZTOWY, nie pominięcie kosztów.
+  broker_agnostic: true
+
+  spread:
+    source: "rzeczywiste ticki bid/ask w momencie fillu"
+    use_average_spread: false
+    use_mid: false
+
+  # Surowy spread Dukascopy jest węższy niż u typowego brokera detalicznego.
+  # Modelowanie go wprost byłoby optymistyczne, więc nakładamy podłogę
+  # odpowiadającą przeciętnym warunkom detalicznym. Efektywny koszt to
+  # max(spread_tickowy + prowizja, podłoga).
+  min_roundturn_cost_pips:
+    fx_majors: 1.5
+    fx_crosses: 2.5
+
+  commission: "wliczona w podłogę kosztu — nie modelowana osobno"
+  slippage_entry_x_spread: 0.5
+  slippage_stop_x_spread: 1.0            # asymetryczne — stop realizuje się w ruchu
+  slippage_tp: 0.0
+  tp_fill_requires_full_cross: true
+
+  barrier_order_resolution: "tick"
+  barrier_order_fallback: "pessimistic"  # SL zawsze pierwszy
+  barrier_order_optimistic_allowed: false
+
+  weekend_gap: "fill po pierwszej dostępnej cenie; stopy NIE chronią przez lukę"
+
+  financing:
+    # Koszt_R = (stawka_roczna * dni) / (365 * stop_jako_ulamek_ceny)
+    # Procent ryzyka skraca się we wzorze.
+    formula: "(annual_rate * holding_days) / (365 * stop_pct_of_price)"
+    cohort_a_mode: "rate_differential"   # FX: różnica stóp
+    cohort_b_mode: "full_rate"           # CFD: benchmark + marża brokera
+    broker_markup_annual_pct: [1.5, 3.0]
+
+    # Marża doliczana do swapu FX, płacona przez OBIE strony (ADR-037).
+    # Jedyna liczba w modelu kosztów bez sparsowanego źródła — jest
+    # założeniem modelowym, nie pomiarem, i przy typowym stopie kosztuje
+    # więcej niż cały spread. Dlatego NIE wolno jej raportować punktowo:
+    # każdy wynik idzie z osią `cohort_a_markup_sensitivity`.
+    cohort_a_markup_annual_pct: 0.5
+    cohort_a_markup_sensitivity: [0.5, 1.0, 2.0]
+    # Stopy: OECD overnight (call money) z FRED, miesięczne, brane
+    # z miesiąca POPRZEDZAJĄCEGO decyzję — patrz src/data/rates.py.
+    cohort_a_rate_kind: "overnight"
+    directional_asymmetry: true          # long płaci, short otrzymuje
+    triple_swap_wednesday: true
+
+    # Szacunki rzędu wielkości dla 10 dni. DO WERYFIKACJI w bramce 0.
+    estimates_10d_R:
+      EURUSD: {stop_pct: 1.1, spread_R: 0.008, financing_R: 0.025}
+      XAUUSD: {stop_pct: 2.4, spread_R: 0.008, financing_R: 0.08}
+      SPX500: {stop_pct: 1.8, spread_R: 0.006, financing_R: 0.107}
+      DAX40:  {stop_pct: 2.0, spread_R: 0.008, financing_R: 0.096}
+
+  sensitivity_multipliers: [1.0, 2.0, 3.0]
+  # Jeśli edge znika przy 2x kosztach, nie jest prawdziwy.
+
+# =============================================================================
+# WALIDACJA
+# =============================================================================
+validation:
+  cpcv:
+    n_groups: 6
+    n_test_groups: 2                     # 15 ścieżek zamiast 1
+    purge_business_days: 10              # = max holding period
+    embargo_business_days: 5
+    block_unit: "cały dzień, wszystkie instrumenty łącznie"
+
+  walk_forward:
+    train_years: 3
+    test_months: 6
+    role: "kontrola zgodności z CPCV"
+    divergence_action: "STOP — leakage albo niestacjonarność"
+
+  bootstrap:
+    method: "block"
+    block_days: 20
+    replications: 10000
+
+  # Benchmark obowiązkowy z SPEC §12 (kontrola #5). ADR-038 zamyka blokadę
+  # z ADR-036: rentowności 2-letnich nie ma w jednej definicji dla ośmiu
+  # walut, a "8 walut vs USD" wymagałoby NZDUSD i USDCHF, czyli zmiany
+  # sekcji `instruments` (frozen: true). Carry mierzone punktem 3M,
+  # uniwersum zawężone do walut kohorty A. Sekcja NIE jest zamrożona.
+  benchmark_carry_trend:
+    carry_measure: "interbank_3m"        # było yield_2y (niedostępne)
+    carry_rate_month: "previous"         # jak ADR-035 pkt 2
+    currencies: [EUR, GBP, JPY, AUD, CAD]   # vs USD; było 8
+    long_top_n: 1                        # 1/5 ≈ proporcja 2/8 z §12
+    short_bottom_n: 1
+    stops: false
+
+    # --- ADR-039: operacjonalizacja §12 ---------------------------------
+    # Pięć nakładających się portfeli zamiast jednego dnia rebalansu.
+    # Pojedyncza kotwica byłaby cichym stopniem swobody w benchmarku,
+    # którego jedyną zaletą wg ADR-019 jest ich brak.
+    rebalance_anchors: [Mon, Tue, Wed, Thu, Fri]
+    # ADR-043: fixing WM/Reuters — standardowy moment wyceny FX, w nakładce
+    # Londyn/Nowy Jork. Było 00:00 UTC, czyli decyzja z bara 23:00, godzinę
+    # po zamknięciu NY i przed otwarciem Tokio: najcieńsza godzina doby.
+    # Czas LOKALNY + strefa, nigdy stały offset (ADR-034 pkt 4): 16:00
+    # w Londynie to 15:00 UTC latem i 16:00 UTC zimą.
+    rebalance_time_local: "16:00"
+    rebalance_timezone: "Europe/London"  # decyzja z ostatniego zamkniętego bara H1
+    momentum_lookback_business_days: 63  # ≈ 3 miesiące (§12)
+    momentum_price: "bid_close"          # sygnał, nie fill — jedna strona
+    # 1 R = sl_multiple * atr_d1_14, czyli TA SAMA jednostka co w strategii.
+    # Koszyk nie ma stopu, ale porównanie w R wymaga wspólnej skali.
+    r_unit: "labels.sl_multiple * atr_d1_14"
+    trade_costs_on_rebalance_only: true  # waluta zostająca w koszyku nie jest
+                                         # przehandlowana ("znikomy obrót")
+    apply_blackout: false                # warunki NO TRADE należą do V1a
+    skip_week_on_missing_currency: true  # ranking 4 walut to inny koszyk
+    # ADR-040 koryguje ADR-039: porównanie po Sharpie, nie po średniej.
+    # Strategia trzyma średnio 4,38 R otwartego ryzyka, koszyk zawsze 2,00 R
+    # — różnica średnich dziennych R faworyzowałaby ją 2,2x bez przewagi.
+    comparison_statistic: "sharpe_of_daily_R"
+    comparison_ci: "block bootstrap 20d, te same bloki dla OBU serii"
+    comparison_criterion: "CI95 różnicy Sharpe'ów (strategia − koszyk) > 0"
+    report_note: >
+      Wynik porównania MUSI nieść: zapis o zawężeniu uniwersum (ADR-038
+      pkt 6), przedział ufności RÓŻNICY zamiast dwóch liczb punktowych,
+      średnie otwarte ryzyko i średnie dzienne R obu serii (ADR-040 pkt 4),
+      wynik per kotwica rebalansu (ADR-040 pkt 5) oraz całą oś marży
+      (ADR-037).
+
+  # --- ADR-044: kontrola #4, dwa ramiona o różnym statusie -------------
+  control_buy_hold_carry_only:
+    # 4a — ramię ROZSTRZYGAJĄCE. Konstrukcja identyczna z koszykiem §12,
+    # jedyna różnica to wejście do rankingu: sam carry, bez zwrotu 3M.
+    # Zero parametrów swobodnych — znika nawet okno 63 dni.
+    carry_only:
+      ranking: "carry"                 # bez członu momentum
+      inherits: "validation.benchmark_carry_trend"
+      # Tygodnie pomijane wedle TEJ SAMEJ reguły co §12, łącznie z wymogiem
+      # policzalnego momentum — #4a i #5 mają różnić się rankingiem, nie próbą.
+      same_weeks_as_benchmark: true
+      comparison_statistic: "sharpe_of_daily_R"     # jak ADR-040
+      comparison_criterion: "CI95 różnicy Sharpe'ów (strategia − carry_only) > 0"
+
+    # 4b — DIAGNOSTYKA, nie próg. Realizuje zarazem §10.2 #9 dla kohorty A;
+    # #9 zostaje otwarte jako obowiązek dla kohorty B.
+    buy_and_hold:
+      side: "long"                     # każda para kohorty A
+      r_unit: "labels.sl_multiple * atr_d1_14"
+      is_threshold: false
+      # Bez Sharpe'a i bez werdyktu. FX nie ma broniącego się kierunku
+      # pasywnego, a jedna noga na parę wrzuca całe R w jeden dzień, więc
+      # jej Sharpe byłby artefaktem przypisania, nie wyniku (ADR-044).
+      report: "suma R per para + suma równoważona, obok sumarycznego R strategii"
+
+  controls:
+    - {id: 1,  name: random_entry_same_exit_same_sizing_same_count,
+       purpose: "rozkład zerowy — NAJWAŻNIEJSZY BENCHMARK"}
+    - {id: 2,  name: shuffled_labels, expect: "wynik ~ 0"}
+    - {id: 3,  name: shifted_features_plus_1_bar, expect: "wynik NIE MOŻE rosnąć"}
+    - {id: 4,  name: buy_and_hold_carry_only, expect: "musi zostać pobity"}
+    - {id: 5,  name: carry_trend_basket, expect: "musi zostać pobity"}
+    - {id: 6,  name: block_bootstrap_ci}
+    - {id: 7,  name: monte_carlo_trade_permutation}
+    - {id: 8,  name: long_short_expectancy_split_per_instrument,
+       purpose: "wykrywa dryf kierunkowy udający edge"}
+    - {id: 9,  name: buy_and_hold_per_instrument,
+       purpose: "oddziela betę od sygnału", mandatory_for: cohort_b}
+    - {id: 10, name: random_entry_per_cohort,
+       purpose: "rozkład zerowy różni się między klasami aktywów"}
+
+  acceptance_thresholds:
+    frozen: true
+    expectancy_net_R_min: 0.10
+    t_stat_min: 2.0
+    deflated_sharpe_min: 0.95           # ADR-027 (było 0.0 — puste, DSR ∈ [0,1])
+    pbo_max: 0.30
+    positive_at_cost_multiple: 2.0
+    min_instruments_positive: 4          # z 6 w kohorcie A
+    min_subperiods_positive: 2           # z 3
+    parameter_sensitivity: "plateau, nie szpikulec"
+    # ADR-028: każdy sąsiad z signal_v1a.sensitivity_grid ma E[R] tego
+    # samego znaku co baseline i >= 50% jego wartości.
+    plateau_min_fraction_of_baseline: 0.5
+
+  leakage_checklist:
+    - "normalizacje w oknie rozszerzającym, tylko przeszłość"
+    - "żaden fit() nie widział danych testowych (skaler, imputer, kalibrator)"
+    - "makro przez ALFRED z realtime_start = data decyzji"
+    - "bar H1 zamknięty przed momentem decyzji (off-by-one)"
+    - "symulator fillów nie widzi cen po momencie decyzji"
+    - "kolejność barier tickowo lub pesymistycznie"
+    - "bid i ask osobno, nigdzie mid"
+    - "brak modeli stanu ze smoothingiem (Viterbi predict, smoothed_marginal)"
+    - "zbiór instrumentów zamrożony"
+    - "parametry w YAML z hashem git przed uruchomieniem"
+    - "trials.jsonl zaktualizowany automatycznie"
+    - "żadne wejście do backtestu nie pochodzi od LLM"
+    - "kontrole 2 i 3 przeszły"
+
+# =============================================================================
+# BENCHMARK OBOWIĄZKOWY
+# =============================================================================
+benchmark_carry_trend:
+  rebalance: "weekly"
+  universe_size: 8                       # walut vs USD
+  ranking: "yield_2y + zwrot 3-miesięczny"
+  long_n: 2
+  short_n: 2
+  sizing: "równe ryzyko przez ATR"
+  stops: false
+  note: >
+    Jeśli system nie bije tego koszyka poza próbą, cała złożoność jest
+    nieuzasadniona i przechodzimy na koszyk.
+
+# =============================================================================
+# BRAMKI I KILL CRITERIA
+# =============================================================================
+gates:
+  frozen: true
+
+  gate_0:
+    week: 4
+    name: "infrastruktura"
+    stop_if_any:
+      - "strategia losowa NIE daje expectancy ~ -koszt (model kosztów zepsuty)"
+      - "luki > 5% barów H1 w godzinach handlowych na >= 2 parach"
+      - "spread nie jest odtwarzany z rzeczywistych ticków bid/ask (użyto średniej lub mid)"
+      - "model kosztów nie stosuje podłogi min_roundturn_cost_pips"
+
+  gate_1:
+    week: 5
+    name: "rozkład zerowy"
+    stop_if: "kontrola losowa daje dodatnie expectancy"
+
+  gate_2:
+    week: 8
+    name: "baseline — BRAMKA GŁÓWNA"
+    requires_all: "validation.acceptance_thresholds"
+    also_requires: "istotna przewaga nad kontrolą losową (p < 0.05)"
+    on_failure: >
+      Warstwa techniczna nie ma edge'u na tych danych i w tym stylu.
+      NIE dodajemy macro. NIE dodajemy ML. NIE dodajemy reżimów.
+      NIE stroimy parametrów. Kończymy albo wracamy do innej hipotezy.
+
+  gate_3:
+    week: 10
+    name: "incremental value"
+    component_min_R: 0.03
+    on_component_failure: "USUWAMY komponent, nie stroimy go"
+    on_benchmark_failure: "przechodzimy na koszyk carry+trend"
+
+  gate_4:
+    week: 11
+    name: "sealed hold-out"
+    runs_allowed: 1
+    stop_if_any:
+      - "expectancy < 50% wartości z walidacji"
+      - "expectancy < 0.05 R"
+      - "max_dd > 2x max_dd z walidacji"
+
+  gate_0b:
+    week: 14
+    name: "infrastruktura kohorty B"
+    scope: "zatrzymuje replikację, nie cały projekt"
+    stop_if_any:
+      - "model finansowania niezwalidowany wobec realnych stawek brokera"
+      - "kalendarz sesji nie odtwarza luk otwarcia"
+      - "historia CFD krótsza niż 6 lat na którymkolwiek instrumencie"
+
+  gate_5:
+    week: 15
+    name: "replikacja na kohorcie B"
+    runs_allowed: 1
+    parameters: "zamrożone hashem gita po bramce 2 — ZERO dostrajania"
+    confirms_if: "expectancy netto > 0 na >= 3 z 4 instrumentów"
+    on_failure: >
+      Nie unieważnia bramki 4, ale obniża wiarygodność edge'u.
+      MUSI być raportowane razem z nim — nigdy przemilczane.
+
+# Zapisany TERAZ, żeby nie był decyzją post hoc.
+contingency_after_gate_2_failure:
+  attempts_allowed: 1
+  cohort: "B"
+  parameters: "identyczne — zero dostrajania"
+  counts_as_trial: true
+  rationale: >
+    FX majors są prawdopodobnie najtrudniejszą klasą aktywów dla metod
+    momentum: brak naturalnych hedgerów o niskiej wrażliwości cenowej
+    i brak kierunkowej premii za ryzyko. Porażka na kohorcie A niesie
+    realne ryzyko fałszywie negatywnego wyniku dla samej metody.
+  on_failure: "Projekt się kończy."
+
+kill_global:
+  max_trials_before_gate_2: 50          # N z ADR-029: warianty w przebiegach `strategy`
+  max_months_before_gate_2: 4
+  leakage_rule: >
+    Konieczność złamania któregokolwiek punktu z leakage_checklist,
+    żeby uzyskać dodatni wynik => STOP NATYCHMIAST.
+    Wynik pochodzi z leakage'u.
+
+real_money_conditions:
+  all_required:
+    - "gate_4 zdany"
+    - "co najmniej 6 miesięcy forward paper tradingu w granicach CI z backtestu"
+    - "poślizg i spread w paper tradingu <= modelowane"
+    - "ZERO ręcznych interwencji w całym okresie"
+
+# =============================================================================
+# REJESTR PRÓB
+# =============================================================================
+trials_registry:
+  path: "trials.jsonl"
+  append_only: true
+  automatic: true
+  manual_skip_allowed: false
+  versioned_in_git: true
+  note: >
+    Każda iteracja wspomagana LLM jest próbą i musi zostać zalogowana.
+    Praca z asystentem zwiększa tempo generowania wariantów 10-50x,
+    więc licznik rośnie szybciej, niż intuicja nadąża śledzić.
+    Bez maszynowego rejestru Deflated Sharpe Ratio jest teatrem.
+
+# =============================================================================
+# ZAKAZY TECHNOLOGICZNE V1
+# =============================================================================
+forbidden_in_v1:
+  models: [xgboost, lightgbm, hmm, markov_switching, pytorch, meta_labeling]
+  infrastructure: [postgresql, timescaledb, redis, fastapi, react, nextjs, docker, mcp, discord]
+  libraries: [talib, openbb]
+  data: [social_sentiment, central_bank_text_analysis, event_surprise]
+  workflow: [discord_to_claude_manual_loop]
+  llm_generated_backtest_inputs: true    # parametric look-ahead — nienaprawialne
