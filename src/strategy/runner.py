@@ -44,9 +44,15 @@ zamiast pokazywać pięć identycznych liczb jako „rozkład".
 
 BENCHMARK §12
 
-Nie jest liczony. ADR-036 zablokował go brakiem rentowności 2-letnich,
-ADR-038 wybrał zamiennik, ale kodu benchmarku nie ma. Każdy raport
-powołujący się na §12 musi to mówić wprost — `render()` to robi.
+Liczony. ADR-036 zablokował go brakiem rentowności 2-letnich, ADR-038
+wybrał zamiennik (`carry_measure: interbank_3m`), a kod stoi w
+`validation/benchmark.py` i wchodzi do przebiegu z `run_v1a.py`, o ile nie
+podano `--no-benchmark`. Raport i tak musi mówić, że koszyk jest WĘŻSZY niż
+ten, którym ADR-019 uzasadniał benchmark — `render()` robi to obiema
+notkami, a wybiera między nimi po `Benchmark.computed`.
+
+Nie policzony koszyk NIE jest zaliczoną kontrolą (ADR-036 pkt 1): przy
+`--no-benchmark` kontrola #5 wypada na czerwono i bramka 2 nie może przejść.
 """
 
 from __future__ import annotations
